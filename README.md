@@ -11,7 +11,9 @@ This preview version can be used for testing and prototypes. It does not provide
 - package **blocks** has the tools to parse Fabric or Fabric-X blocks. It also includes a simple Processor that can execute pluggable handlers.
 - package **endorsement** can read a Fabric-style SignedProposal (the request made to a peer to execute chaincode). It can also create a signed response, with a transaction
  or read/write set style that can be either Fabric- or Fabric-X format. Fabric-X does not support "traditional" chaincode, but this package makes it possible to create signed endorsements of read/write sets following the new programming model.
+- package **fabrictest** mimics a minimal in-memory Fabric or Fabric-X network for tests. It implements the orderer Broadcast API and the peer Deliver endpoint.
 - package **identity** has the bare minimum for Fabric ecdsa identities.
+- package **integration** provides a couple of tests that exercise a large surface of the SDK. It provides some assurance on the internal consistency of the project. By default, the internal `fabrictest` fake network is used. It can also be pointed to real networks.
 - package local can be used to mock a Fabric backend for testing. Instead of submitting to an orderer, it can insert read/write sets directly in a local database. Some MVCC checks are provided, but should not be trusted to be 1:1 compatible with a real network.
 - package **network** has clients for peers and orderers, along with simple wrappers to submit a transaction and to synchronize a local database with a committer.
 - package **state** provides a versioned insert-only database that can be used to construct a local world state. For example, an endorser could use it to perform actions on a recent state in order to generate a read/write set based on custom business logic.
