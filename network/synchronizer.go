@@ -75,7 +75,19 @@ func (s *Synchronizer) Start(ctx context.Context) error {
 		// BlockNumber returns 0 in two cases: the DB is fresh (no blocks yet), or block 0
 		// was the last block processed. We always start from 0 in both cases. This is safe
 		// to do because there are never any state changing transactions in block 0.
-		lastBlock, _ := s.db.BlockNumber(ctx)
+		lastBlock, err := s.db.BlockNumber(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			s.log.Warnf("failed to read block height from DB: %v — retrying in %s", err, currentBackoff)
+			if err := sleepCtx(ctx, currentBackoff); err != nil {
+				return nil
+			}
+			currentBackoff = min(currentBackoff*2, maxBackoff)
+			continue
+		}
+
 		var start uint64
 		if lastBlock > 0 {
 			start = lastBlock + 1
@@ -83,22 +95,18 @@ func (s *Synchronizer) Start(ctx context.Context) error {
 
 		s.log.Infof("starting synchronization from block %d...", start)
 		if err := s.peer.SubscribeBlocks(ctx, s.channel, start, s.signer, s.processor); err != nil {
-			if currentBackoff >= maxBackoff {
-				s.log.Errorf("giving up after repeated deliver errors: %v", err)
-				return fmt.Errorf("repeated errors subscribing to peer delivery: %w", err)
-			}
 			s.log.Warnf("deliver error: %v — retrying in %s", err, currentBackoff)
 			if err := sleepCtx(ctx, currentBackoff); err != nil {
-				return nil // context canceled during backoff sleep — clean shutdown
+				return nil
 			}
-			currentBackoff *= 2
+			currentBackoff = min(currentBackoff*2, maxBackoff)
 			continue
 		}
 		currentBackoff = time.Second
 	}
 }
 
-// BlockHeight is the last processed block for this committer.
+// BlockHeight returns the block height, i.e. the index of the next block to be processed.
 func (s *Synchronizer) BlockHeight(ctx context.Context) (uint64, error) {
 	lpb, err := s.db.BlockNumber(ctx)
 	if err != nil {
@@ -109,11 +117,11 @@ func (s *Synchronizer) BlockHeight(ctx context.Context) (uint64, error) {
 
 // PeerBlockHeight only works on Fabric, not on Fabric-X.
 func (s *Synchronizer) PeerBlockHeight(ctx context.Context) (uint64, error) {
-	prop, err := NewSignedProposal(s.signer, s.channel, "qscc", "1.0", [][]byte{[]byte("GetChainInfo"), []byte(s.channel)}, mustNonce())
+	prop, err := NewSignedProposal(s.signer, s.channel, "qscc", "1.0", [][]byte{[]byte("GetChainInfo"), []byte(s.channel)})
 	if err != nil {
 		return 0, err
 	}
-	res, err := s.peer.Query(ctx, prop)
+	res, err := s.peer.ProcessProposal(ctx, prop)
 	if err != nil {
 		return 0, err
 	}
@@ -143,13 +151,13 @@ func (s *Synchronizer) WaitUntilSynced(ctx context.Context, timeout time.Duratio
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("sync aborted")
+			return ctx.Err()
 		case <-ticker.C:
 			peerHeight, err := s.PeerBlockHeight(ctx)
 			if err != nil {
 				s.log.Warnf("error getting peer height: %v — retrying in %s", err, backoff)
 				if err := sleepCtx(ctx, backoff); err != nil {
-					return fmt.Errorf("sync aborted")
+					return ctx.Err()
 				}
 
 				backoff *= 2

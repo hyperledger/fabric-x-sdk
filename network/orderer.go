@@ -37,6 +37,7 @@ type TxPackager interface {
 type FabricSubmitter struct {
 	orderers []*Orderer
 	packager TxPackager
+	logger   sdk.Logger
 	// waitAfterSubmit is a temporary patch to wait for finality, until we have a proper finality listener. FIXME
 	waitAfterSubmit time.Duration
 }
@@ -47,7 +48,7 @@ type OrdererConf struct {
 	TLSPath string
 }
 
-func NewSubmitter(config []OrdererConf, packager TxPackager, waitAfterSubmit time.Duration) (*FabricSubmitter, error) {
+func NewSubmitter(config []OrdererConf, packager TxPackager, waitAfterSubmit time.Duration, logger sdk.Logger) (*FabricSubmitter, error) {
 	if len(config) == 0 {
 		return nil, errors.New("no orderers configured")
 	}
@@ -72,12 +73,13 @@ func NewSubmitter(config []OrdererConf, packager TxPackager, waitAfterSubmit tim
 	return &FabricSubmitter{
 		orderers:        or,
 		packager:        packager,
+		logger:          logger,
 		waitAfterSubmit: waitAfterSubmit,
 	}, nil
 }
 
 // Submit to each of the registered orderers, returns an error if more than half errored.
-func (s FabricSubmitter) Submit(_ context.Context, end sdk.Endorsement) error {
+func (s FabricSubmitter) Submit(ctx context.Context, end sdk.Endorsement) error {
 	env, err := s.packager.PackageTx(end)
 	if err != nil {
 		return fmt.Errorf("package proposal: %w", err)
@@ -85,17 +87,17 @@ func (s FabricSubmitter) Submit(_ context.Context, end sdk.Endorsement) error {
 
 	var wg sync.WaitGroup
 	var errs int32
-	for _, o := range s.orderers {
+	for i, o := range s.orderers {
 		wg.Go(func() {
-			if err := o.Broadcast(env); err != nil {
-				//log.Error(fmt.Sprintf("orderer%d: %s", n, err.Error()))
+			if err := o.Broadcast(ctx, env); err != nil {
+				s.logger.Warnf("orderer %d (%s): broadcast failed: %v", i, o.addr, err)
 				atomic.AddInt32(&errs, 1)
 			}
 		})
 	}
 	wg.Wait()
 
-	if int(errs) > (len(s.orderers)/2)+1 {
+	if int(errs)*2 > len(s.orderers) {
 		return errors.New("error broadcasting")
 	}
 
@@ -121,9 +123,7 @@ func (s *FabricSubmitter) Close() error {
 type Orderer struct {
 	conn   *grpc.ClientConn
 	client orderer.AtomicBroadcastClient
-	stream orderer.AtomicBroadcast_BroadcastClient
-	ctx    context.Context
-	cancel context.CancelFunc
+	addr   string
 }
 
 func NewOrderer(addr string, tlsPem []byte) (*Orderer, error) {
@@ -147,25 +147,26 @@ func NewOrderer(addr string, tlsPem []byte) (*Orderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial orderer: %w", err)
 	}
-	o := &Orderer{
+	return &Orderer{
 		conn:   conn,
 		client: orderer.NewAtomicBroadcastClient(conn),
-	}
-	o.ctx, o.cancel = context.WithCancel(context.Background())
-	o.stream, err = o.client.Broadcast(o.ctx)
-	if err != nil {
-		conn.Close() //nolint:errcheck
-		return nil, fmt.Errorf("connection to orderer: %w", err)
-	}
-	return o, nil
+		addr:   addr,
+	}, nil
 }
 
 // Broadcast sends a signed envelope with an endorsed EndorserTransaction for ordering.
-func (o Orderer) Broadcast(env *common.Envelope) error {
-	if err := o.stream.Send(env); err != nil {
+func (o *Orderer) Broadcast(ctx context.Context, env *common.Envelope) error {
+	stream, err := o.client.Broadcast(ctx)
+	if err != nil {
+		return fmt.Errorf("open stream: %w", err)
+	}
+	if err := stream.Send(env); err != nil {
 		return err
 	}
-	resp, err := o.stream.Recv()
+	if err := stream.CloseSend(); err != nil {
+		return err
+	}
+	resp, err := stream.Recv()
 	if err != nil {
 		return err
 	}
@@ -176,11 +177,5 @@ func (o Orderer) Broadcast(env *common.Envelope) error {
 }
 
 func (o *Orderer) Close() error {
-	if err := o.stream.CloseSend(); err != nil {
-		o.cancel()
-		_ = o.conn.Close()
-		return err
-	}
-	o.cancel()
 	return o.conn.Close()
 }

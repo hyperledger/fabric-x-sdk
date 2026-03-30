@@ -29,6 +29,6 @@ func (p TxPackager) PackageTx(end sdk.Endorsement) (*common.Envelope, error) {
 	return protoutil.CreateSignedTx(end.Proposal, p.signer, end.Responses...)
 }
 
-func NewSubmitter(orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration) (*network.FabricSubmitter, error) {
-	return network.NewSubmitter(orderers, NewTxPackager(s), waitAfterSubmit)
+func NewSubmitter(orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
+	return network.NewSubmitter(orderers, NewTxPackager(s), waitAfterSubmit, logger)
 }

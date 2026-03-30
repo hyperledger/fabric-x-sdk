@@ -8,6 +8,7 @@ package blocks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 )
@@ -36,12 +37,12 @@ type Processor struct {
 func (p Processor) ProcessBlock(ctx context.Context, block *common.Block) error {
 	b, err := p.parser.Parse(block)
 	if err != nil {
-		return err // ? TODO: decide on error handling for block parsing.
+		return fmt.Errorf("parse: %w", err)
 	}
 
 	for _, h := range p.handlers {
 		if err := h.Handle(ctx, b); err != nil {
-			return err
+			return fmt.Errorf("handle: %w", err)
 		}
 	}
 	return nil

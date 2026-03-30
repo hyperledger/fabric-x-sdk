@@ -156,6 +156,6 @@ func CreateSignedTx(
 	return &common.Envelope{Payload: paylBytes, Signature: sig}, nil
 }
 
-func NewSubmitter(orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration) (*network.FabricSubmitter, error) {
-	return network.NewSubmitter(orderers, NewTxPackager(s), waitAfterSubmit)
+func NewSubmitter(orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
+	return network.NewSubmitter(orderers, NewTxPackager(s), waitAfterSubmit, logger)
 }
