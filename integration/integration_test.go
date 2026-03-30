@@ -72,7 +72,7 @@ func (e *localEndorser) ProcessProposal(_ context.Context, prop *peer.SignedProp
 // endorse builds a proposal, sends it to endr, and returns the resulting sdk.Endorsement.
 func endorse(t *testing.T, signer sdk.Signer, endr *localEndorser, args [][]byte) sdk.Endorsement {
 	t.Helper()
-	prop, err := network.NewSignedProposal(signer, channel, namespace, "1.0", args, nil)
+	prop, err := network.NewSignedProposal(signer, channel, namespace, "1.0", args)
 	if err != nil {
 		t.Fatalf("NewSignedProposal: %v", err)
 	}
@@ -135,11 +135,11 @@ func newSetup(t *testing.T, networkType string, cfg ...fabrictest.BatchingConfig
 	case "fabric":
 		parser = bfab.NewBlockParser(log)
 		builder = efab.NewEndorsementBuilder(signer)
-		submitter, err = nfab.NewSubmitter(orderers, signer, 0)
+		submitter, err = nfab.NewSubmitter(orderers, signer, 0, log)
 	case "fabric-x":
 		parser = bfabx.NewBlockParser(log)
 		builder = efabx.NewEndorsementBuilder(signer)
-		submitter, err = nfabx.NewSubmitter(orderers, signer, 0)
+		submitter, err = nfabx.NewSubmitter(orderers, signer, 0, log)
 	}
 	if err != nil {
 		t.Fatalf("NewSubmitter: %v", err)
@@ -158,7 +158,7 @@ func newSetup(t *testing.T, networkType string, cfg ...fabrictest.BatchingConfig
 
 	// Submit creates, endorses and submits a transaction.
 	submit := func(ctx context.Context, rws blocks.ReadWriteSet) error {
-		signedProp, err := network.NewSignedProposal(signer, channel, namespace, "1.0", [][]byte{[]byte("invoke")}, nil)
+		signedProp, err := network.NewSignedProposal(signer, channel, namespace, "1.0", [][]byte{[]byte("invoke")})
 		if err != nil {
 			return fmt.Errorf("NewSignedProposal: %w", err)
 		}
@@ -600,7 +600,7 @@ func TestAddLog(t *testing.T) {
 				t.Fatalf("marshal logs: %v", err)
 			}
 
-			signedProp, err := network.NewSignedProposal(s.signer, channel, namespace, "1.0", [][]byte{[]byte("invoke")}, nil)
+			signedProp, err := network.NewSignedProposal(s.signer, channel, namespace, "1.0", [][]byte{[]byte("invoke")})
 			if err != nil {
 				t.Fatalf("NewSignedProposal: %v", err)
 			}
