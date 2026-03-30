@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -26,6 +27,9 @@ type Synchronizer struct {
 	signer    sdk.Signer
 	log       sdk.Logger
 	processor BlockProcessor
+
+	syncing     atomic.Bool
+	lastSyncErr atomic.Pointer[error]
 }
 
 type BlockHeightReader interface {
@@ -94,7 +98,11 @@ func (s *Synchronizer) Start(ctx context.Context) error {
 		}
 
 		s.log.Infof("starting synchronization from block %d...", start)
-		if err := s.peer.SubscribeBlocks(ctx, s.channel, start, s.signer, s.processor); err != nil {
+		s.syncing.Store(true)
+		err = s.peer.SubscribeBlocks(ctx, s.channel, start, s.signer, s.processor)
+		s.syncing.Store(false)
+		if err != nil {
+			s.lastSyncErr.Store(&err)
 			s.log.Warnf("deliver error: %v — retrying in %s", err, currentBackoff)
 			if err := sleepCtx(ctx, currentBackoff); err != nil {
 				return nil
@@ -178,6 +186,19 @@ func (s *Synchronizer) WaitUntilSynced(ctx context.Context, timeout time.Duratio
 			s.log.Debugf("synchronizing blocks (%d/%d)", localHeight, peerHeight)
 		}
 	}
+}
+
+// Healthy returns nil if the synchronizer currently has an active deliver stream
+// with the peer. It returns the last deliver error if the stream has failed, or
+// a "not yet connected" error if Start has not yet established its first connection.
+func (s *Synchronizer) Healthy() error {
+	if s.syncing.Load() {
+		return nil
+	}
+	if ep := s.lastSyncErr.Load(); ep != nil {
+		return *ep
+	}
+	return errors.New("not yet connected")
 }
 
 // sleepCtx sleeps for d or returns early if ctx is canceled.
