@@ -1,7 +1,8 @@
-// Copyright IBM Corp. All Rights Reserved.
-//
-// SPDX-License-Identifier: Apache-2.0
-//
+/*
+Copyright IBM Corp. All Rights Reserved.
+
+SPDX-License-Identifier: Apache-2.0
+*/
 
 // Package sqlite provides a production-ready SQLite database opener with
 // sensible defaults for both write and read-only access patterns.

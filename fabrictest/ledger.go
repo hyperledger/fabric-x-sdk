@@ -135,3 +135,15 @@ func (l *ledger) height() uint64 {
 	defer l.mu.Unlock()
 	return uint64(len(l.blocks) + 1)
 }
+
+// close shuts down the ledger by closing all subscriber channels (which causes
+// goroutines blocked in Deliver to exit) and closing the world-state DB.
+func (l *ledger) close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, ch := range l.subs {
+		close(ch)
+	}
+	l.subs = nil
+	l.db.Close()
+}

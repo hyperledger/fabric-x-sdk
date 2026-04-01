@@ -33,6 +33,8 @@ type Network struct {
 	PeerAddr    string
 	oSrv        *grpc.Server
 	pSrv        *grpc.Server
+	orderer     *testOrderer
+	ledger      *ledger
 }
 
 // TxParser extracts read-write sets from transaction envelopes.
@@ -86,11 +88,12 @@ func Start(namespace, networkType string, cfg BatchingConfig) (*Network, error) 
 	}
 
 	// ledger ties it together by storing blocks and the world state db
-	ledger := newLedger(db, parser, validator)
+	n.ledger = newLedger(db, parser, validator)
+	n.orderer = newTestOrderer(n.ledger, cfg)
 
 	// grpc endpoints
-	orderer.RegisterAtomicBroadcastServer(n.oSrv, newTestOrderer(ledger, cfg))
-	peer.RegisterDeliverServer(n.pSrv, newTestPeer(ledger))
+	orderer.RegisterAtomicBroadcastServer(n.oSrv, n.orderer)
+	peer.RegisterDeliverServer(n.pSrv, newTestPeer(n.ledger))
 
 	go n.oSrv.Serve(ordererLis)
 	go n.pSrv.Serve(peerLis)
@@ -101,4 +104,6 @@ func Start(namespace, networkType string, cfg BatchingConfig) (*Network, error) 
 func (n *Network) Stop() {
 	n.oSrv.Stop()
 	n.pSrv.Stop()
+	n.orderer.stop()
+	n.ledger.close()
 }
