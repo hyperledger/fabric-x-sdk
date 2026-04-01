@@ -29,6 +29,7 @@ func newTestOrderer(l *ledger, cfg BatchingConfig) *testOrderer {
 		ledger: l,
 		config: cfg,
 		inCh:   make(chan *common.Envelope, 64),
+		stopCh: make(chan struct{}),
 	}
 
 	go o.batchingLoop()
@@ -42,6 +43,12 @@ type testOrderer struct {
 	ledger *ledger
 	inCh   chan *common.Envelope
 	config BatchingConfig
+	stopCh chan struct{}
+}
+
+// stop signals batchingLoop to exit.
+func (o *testOrderer) stop() {
+	close(o.stopCh)
 }
 
 // Broadcast is the GRPC endpoint that lets users submit transactions.
@@ -114,6 +121,9 @@ func (o *testOrderer) batchingLoop() {
 
 		case <-timerC:
 			flush()
+
+		case <-o.stopCh:
+			return
 		}
 	}
 }

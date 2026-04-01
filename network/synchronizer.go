@@ -201,6 +201,12 @@ func (s *Synchronizer) Healthy() error {
 	return errors.New("not yet connected")
 }
 
+// Close releases the underlying peer connection.
+// It should be called after Start has returned.
+func (s *Synchronizer) Close() error {
+	return s.peer.Close()
+}
+
 // sleepCtx sleeps for d or returns early if ctx is canceled.
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
