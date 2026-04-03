@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
-	"github.com/hyperledger/fabric-x-committer/api/protoblocktx"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric/protoutil"
@@ -67,7 +68,7 @@ func isValid(txFilter []byte, txNum int) bool {
 	if txNum >= len(txFilter) {
 		return false
 	}
-	return protoblocktx.Status(txFilter[txNum]) == protoblocktx.Status_COMMITTED
+	return committerpb.Status(txFilter[txNum]) == committerpb.Status_COMMITTED
 }
 
 func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
@@ -85,7 +86,7 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 		return nil, nil
 	}
 
-	ptx := &protoblocktx.Tx{}
+	ptx := &applicationpb.Tx{}
 	if err := proto.Unmarshal(pl.Data, ptx); err != nil {
 		return nil, fmt.Errorf("transaction: %w", err)
 	}

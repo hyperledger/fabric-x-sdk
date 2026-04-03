@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync/atomic"
 	"time"
 
@@ -37,21 +36,12 @@ type BlockHeightReader interface {
 }
 
 // NewSynchronizer creates a new synchronizer.
-func NewSynchronizer(db BlockHeightReader, channel string, peerAddress, peerTLSPath string, signer sdk.Signer, processor BlockProcessor, logger sdk.Logger) (*Synchronizer, error) {
-	if len(peerAddress) == 0 {
+func NewSynchronizer(db BlockHeightReader, channel string, conf PeerConf, signer sdk.Signer, processor BlockProcessor, logger sdk.Logger) (*Synchronizer, error) {
+	if len(conf.Address) == 0 {
 		return nil, errors.New("peer address required")
 	}
 
-	var pem []byte
-	var err error
-	if len(peerTLSPath) > 0 {
-		pem, err = os.ReadFile(peerTLSPath)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	peer, err := NewPeer(peerAddress, pem)
+	peer, err := newPeerFromConf(conf)
 	if err != nil {
 		return nil, err
 	}

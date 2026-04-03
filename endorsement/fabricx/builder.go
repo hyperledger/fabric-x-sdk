@@ -13,8 +13,7 @@ import (
 	"sort"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-committer/api/protoblocktx"
-	"github.com/hyperledger/fabric-x-committer/utils/signature"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -37,7 +36,7 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 		return nil, fmt.Errorf("failed to marshal read/write set: %w", err)
 	}
 
-	var tx protoblocktx.Tx
+	var tx applicationpb.Tx
 	if err := proto.Unmarshal(prpBytes, &tx); err != nil {
 		return nil, fmt.Errorf("failed to deserialize tx")
 	}
@@ -45,7 +44,7 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 		return nil, errors.New("nothing to endorse")
 	}
 
-	digest, err := signature.ASN1MarshalTxNamespace(inv.TxID, tx.Namespaces[0])
+	digest, err := tx.Namespaces[0].ASN1Marshal(inv.TxID)
 	if err != nil {
 		return nil, fmt.Errorf("cannot serialize tx: %w", err)
 	}
@@ -81,9 +80,9 @@ func marshalRWSet(rws blocks.ReadWriteSet, namespace string) ([]byte, error) {
 		readByKey[r.Key] = r
 	}
 
-	readsOnly := make([]*protoblocktx.Read, 0)
-	readWrites := make([]*protoblocktx.ReadWrite, 0)
-	blindWrites := make([]*protoblocktx.Write, 0)
+	readsOnly := make([]*applicationpb.Read, 0)
+	readWrites := make([]*applicationpb.ReadWrite, 0)
+	blindWrites := make([]*applicationpb.Write, 0)
 
 	for _, w := range writes {
 		// TODO is this correct?
@@ -95,7 +94,7 @@ func marshalRWSet(rws blocks.ReadWriteSet, namespace string) ([]byte, error) {
 		if isRead {
 			delete(readByKey, w.Key)
 
-			rw := &protoblocktx.ReadWrite{
+			rw := &applicationpb.ReadWrite{
 				Key:   []byte(w.Key),
 				Value: w.Value,
 			}
@@ -104,7 +103,7 @@ func marshalRWSet(rws blocks.ReadWriteSet, namespace string) ([]byte, error) {
 			}
 			readWrites = append(readWrites, rw)
 		} else {
-			blindWrites = append(blindWrites, &protoblocktx.Write{
+			blindWrites = append(blindWrites, &applicationpb.Write{
 				Key:   []byte(w.Key),
 				Value: w.Value,
 			})
@@ -113,7 +112,7 @@ func marshalRWSet(rws blocks.ReadWriteSet, namespace string) ([]byte, error) {
 
 	// add the remaining reads which are not read+writes.
 	for _, r := range readByKey {
-		read := &protoblocktx.Read{Key: []byte(r.Key)}
+		read := &applicationpb.Read{Key: []byte(r.Key)}
 		if r.Version != nil {
 			read.Version = &r.Version.BlockNum
 		}
@@ -131,8 +130,8 @@ func marshalRWSet(rws blocks.ReadWriteSet, namespace string) ([]byte, error) {
 		return bytes.Compare(blindWrites[i].Key, blindWrites[j].Key) < 0
 	})
 
-	tx := &protoblocktx.Tx{
-		Namespaces: []*protoblocktx.TxNamespace{{
+	tx := &applicationpb.Tx{
+		Namespaces: []*applicationpb.TxNamespace{{
 			NsId:        namespace,
 			NsVersion:   0,
 			ReadsOnly:   readsOnly,

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-committer/api/protoblocktx"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"google.golang.org/protobuf/proto"
@@ -40,9 +40,9 @@ func endorse(t *testing.T, rws blocks.ReadWriteSet) *peer.ProposalResponse {
 	return resp
 }
 
-func parseTx(t *testing.T, resp *peer.ProposalResponse) *protoblocktx.TxNamespace {
+func parseTx(t *testing.T, resp *peer.ProposalResponse) *applicationpb.TxNamespace {
 	t.Helper()
-	var tx protoblocktx.Tx
+	var tx applicationpb.Tx
 	if err := proto.Unmarshal(resp.Payload, &tx); err != nil {
 		t.Fatalf("unmarshal Tx: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestMarshalRWSet(t *testing.T) {
 				t.Fatalf("marshalRWSet returned error: %v", err)
 			}
 
-			var tx protoblocktx.Tx
+			var tx applicationpb.Tx
 			if err := proto.Unmarshal(raw, &tx); err != nil {
 				t.Fatalf("failed to unmarshal tx: %v", err)
 			}
@@ -260,7 +260,7 @@ type expectedReadWrite struct {
 	Value    []byte
 }
 
-func assertReadsOnly(t *testing.T, exp []expectedRead, got []*protoblocktx.Read) {
+func assertReadsOnly(t *testing.T, exp []expectedRead, got []*applicationpb.Read) {
 	t.Helper()
 
 	if len(got) != len(exp) {
@@ -289,7 +289,7 @@ func assertReadsOnly(t *testing.T, exp []expectedRead, got []*protoblocktx.Read)
 	}
 }
 
-func assertWrites(t *testing.T, exp []expectedWrite, got []*protoblocktx.Write) {
+func assertWrites(t *testing.T, exp []expectedWrite, got []*applicationpb.Write) {
 	t.Helper()
 
 	if len(got) != len(exp) {
@@ -308,7 +308,7 @@ func assertWrites(t *testing.T, exp []expectedWrite, got []*protoblocktx.Write) 
 	}
 }
 
-func assertReadWrites(t *testing.T, exp []expectedReadWrite, got []*protoblocktx.ReadWrite) {
+func assertReadWrites(t *testing.T, exp []expectedReadWrite, got []*applicationpb.ReadWrite) {
 	t.Helper()
 
 	if len(got) != len(exp) {

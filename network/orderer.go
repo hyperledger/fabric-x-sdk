@@ -44,8 +44,10 @@ type FabricSubmitter struct {
 
 // OrdererConf tells the submitter how to reach an orderer.
 type OrdererConf struct {
-	Address string
-	TLSPath string
+	Address        string // Address and port
+	TLSPath        string // CA cert path for server TLS verification (optional)
+	ClientCertPath string // client cert path for mTLS (optional)
+	ClientKeyPath  string // client key path for mTLS (optional)
 }
 
 func NewSubmitter(config []OrdererConf, packager TxPackager, waitAfterSubmit time.Duration, logger sdk.Logger) (*FabricSubmitter, error) {
@@ -55,19 +57,28 @@ func NewSubmitter(config []OrdererConf, packager TxPackager, waitAfterSubmit tim
 
 	or := make([]*Orderer, len(config))
 	for i, o := range config {
-		var pem []byte
+		var caPem, clientCert, clientKey []byte
 		var err error
 		if len(o.TLSPath) > 0 {
-			pem, err = os.ReadFile(o.TLSPath)
+			caPem, err = os.ReadFile(o.TLSPath)
 			if err != nil {
 				return nil, err
 			}
 		}
-		o, err := NewOrderer(o.Address, pem)
+		if len(o.ClientCertPath) > 0 {
+			clientCert, err = os.ReadFile(o.ClientCertPath)
+			if err != nil {
+				return nil, err
+			}
+			clientKey, err = os.ReadFile(o.ClientKeyPath)
+			if err != nil {
+				return nil, err
+			}
+		}
+		or[i], err = NewOrderer(o.Address, caPem, clientCert, clientKey)
 		if err != nil {
 			return nil, err
 		}
-		or[i] = o
 	}
 
 	return &FabricSubmitter{
@@ -126,21 +137,27 @@ type Orderer struct {
 	addr   string
 }
 
-func NewOrderer(addr string, tlsPem []byte) (*Orderer, error) {
+// NewOrderer dials an orderer with optional TLS (caPem is the server CA cert) or mTLS.
+func NewOrderer(addr string, caPem, clientCert, clientKey []byte) (*Orderer, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("orderer address [%s] must contain port: %w", addr, err)
 	}
 	creds := insecure.NewCredentials()
-	if len(tlsPem) > 0 {
+	if len(caPem) > 0 {
 		roots := x509.NewCertPool()
-		if ok := roots.AppendCertsFromPEM(tlsPem); !ok {
+		if ok := roots.AppendCertsFromPEM(caPem); !ok {
 			return nil, fmt.Errorf("failed to append orderer TLS cert")
 		}
-		creds = credentials.NewTLS(&tls.Config{
-			RootCAs:    roots,
-			ServerName: host,
-		})
+		tlsCfg := &tls.Config{RootCAs: roots, ServerName: host}
+		if len(clientCert) > 0 {
+			cert, err := tls.X509KeyPair(clientCert, clientKey)
+			if err != nil {
+				return nil, fmt.Errorf("orderer mTLS key pair: %w", err)
+			}
+			tlsCfg.Certificates = []tls.Certificate{cert}
+		}
+		creds = credentials.NewTLS(tlsCfg)
 	}
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))

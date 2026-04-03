@@ -37,22 +37,28 @@ type Peer struct {
 	client peer.EndorserClient
 }
 
-func NewPeer(addr string, tlsPem []byte) (*Peer, error) {
+// NewPeer dials a peer with optional one-way TLS (caPem is the server CA cert) or mTLS.
+func NewPeer(addr string, caPem, clientCert, clientKey []byte) (*Peer, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("peer address [%s] must contain port: %w", addr, err)
 	}
 
 	creds := insecure.NewCredentials()
-	if len(tlsPem) > 0 {
+	if len(caPem) > 0 {
 		roots := x509.NewCertPool()
-		if ok := roots.AppendCertsFromPEM(tlsPem); !ok {
+		if ok := roots.AppendCertsFromPEM(caPem); !ok {
 			return nil, fmt.Errorf("failed to append peer TLS cert")
 		}
-		creds = credentials.NewTLS(&tls.Config{
-			RootCAs:    roots,
-			ServerName: host,
-		})
+		tlsCfg := &tls.Config{RootCAs: roots, ServerName: host}
+		if len(clientCert) > 0 {
+			cert, err := tls.X509KeyPair(clientCert, clientKey)
+			if err != nil {
+				return nil, fmt.Errorf("peer mTLS key pair: %w", err)
+			}
+			tlsCfg.Certificates = []tls.Certificate{cert}
+		}
+		creds = credentials.NewTLS(tlsCfg)
 	}
 
 	conn, err := grpc.NewClient(
@@ -140,10 +146,12 @@ func (p *Peer) Close() error {
 	return p.conn.Close()
 }
 
-// PeerConf tells the EndorsementClient how to reach a peer.
+// PeerConf tells the EndorsementClient or Synchronizer how to reach a peer.
 type PeerConf struct {
-	Address string
-	TLSPath string
+	Address        string
+	TLSPath        string // CA cert path for server TLS verification
+	ClientCertPath string // client cert path for mTLS (optional)
+	ClientKeyPath  string // client key path for mTLS (optional)
 }
 
 // EndorsementClient sends a proposal to one or more peers in parallel and collects
@@ -161,15 +169,8 @@ func NewEndorsementClient(config []PeerConf, signer sdk.Signer, channel, namespa
 	}
 	peers := make([]*Peer, len(config))
 	for i, c := range config {
-		var pem []byte
 		var err error
-		if len(c.TLSPath) > 0 {
-			pem, err = os.ReadFile(c.TLSPath)
-			if err != nil {
-				return nil, err
-			}
-		}
-		peers[i], err = NewPeer(c.Address, pem)
+		peers[i], err = newPeerFromConf(c)
 		if err != nil {
 			return nil, err
 		}
@@ -179,6 +180,28 @@ func NewEndorsementClient(config []PeerConf, signer sdk.Signer, channel, namespa
 		signer:  signer,
 		channel: channel,
 	}, nil
+}
+
+func newPeerFromConf(c PeerConf) (*Peer, error) {
+	var caPem, clientCert, clientKey []byte
+	var err error
+	if len(c.TLSPath) > 0 {
+		caPem, err = os.ReadFile(c.TLSPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(c.ClientCertPath) > 0 {
+		clientCert, err = os.ReadFile(c.ClientCertPath)
+		if err != nil {
+			return nil, err
+		}
+		clientKey, err = os.ReadFile(c.ClientKeyPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return NewPeer(c.Address, caPem, clientCert, clientKey)
 }
 
 // ExecuteTransaction sends args to all configured peers in parallel, collects their

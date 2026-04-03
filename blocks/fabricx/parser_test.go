@@ -10,14 +10,14 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
-	"github.com/hyperledger/fabric-x-committer/api/protoblocktx"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"google.golang.org/protobuf/proto"
 )
 
 // buildEnvelope constructs a minimal Envelope whose payload contains a
-// protoblocktx.Tx with the given namespaces.
-func buildEnvelope(t *testing.T, txID string, tx *protoblocktx.Tx) *common.Envelope {
+// applicationpb.Tx with the given namespaces.
+func buildEnvelope(t *testing.T, txID string, tx *applicationpb.Tx) *common.Envelope {
 	t.Helper()
 	chdrBytes, err := proto.Marshal(&common.ChannelHeader{TxId: txID, Type: int32(common.HeaderType_MESSAGE)})
 	if err != nil {
@@ -38,11 +38,11 @@ func buildEnvelope(t *testing.T, txID string, tx *protoblocktx.Tx) *common.Envel
 }
 
 func TestParse_BlindWrite(t *testing.T) {
-	tx := &protoblocktx.Tx{
-		Namespaces: []*protoblocktx.TxNamespace{
+	tx := &applicationpb.Tx{
+		Namespaces: []*applicationpb.TxNamespace{
 			{
 				NsId: "ns",
-				BlindWrites: []*protoblocktx.Write{
+				BlindWrites: []*applicationpb.Write{
 					{Key: []byte("k"), Value: []byte("v")},
 				},
 			},
@@ -70,11 +70,11 @@ func TestParse_BlindWrite(t *testing.T) {
 
 func TestParse_ReadWrite(t *testing.T) {
 	version := uint64(7)
-	tx := &protoblocktx.Tx{
-		Namespaces: []*protoblocktx.TxNamespace{
+	tx := &applicationpb.Tx{
+		Namespaces: []*applicationpb.TxNamespace{
 			{
 				NsId: "ns",
-				ReadWrites: []*protoblocktx.ReadWrite{
+				ReadWrites: []*applicationpb.ReadWrite{
 					{Key: []byte("k"), Value: []byte("new"), Version: &version},
 				},
 			},
@@ -100,11 +100,11 @@ func TestParse_ReadWriteZeroVersion(t *testing.T) {
 	// Version 0 is a valid MVCC constraint meaning "the key was first written at block 0".
 	// It must be preserved in the read, not discarded. Only nil version means "no constraint".
 	zero := uint64(0)
-	tx := &protoblocktx.Tx{
-		Namespaces: []*protoblocktx.TxNamespace{
+	tx := &applicationpb.Tx{
+		Namespaces: []*applicationpb.TxNamespace{
 			{
 				NsId: "ns",
-				ReadWrites: []*protoblocktx.ReadWrite{
+				ReadWrites: []*applicationpb.ReadWrite{
 					{Key: []byte("k"), Value: []byte("v"), Version: &zero},
 				},
 			},
