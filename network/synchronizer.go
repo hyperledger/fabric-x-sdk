@@ -13,17 +13,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	sdk "github.com/hyperledger/fabric-x-sdk"
-	"google.golang.org/protobuf/proto"
 )
 
 // Synchronizer connects to a committing peer to maintain a local copy of the world state.
 type Synchronizer struct {
 	db        BlockHeightReader
-	peer      *Peer
-	channel   string
-	signer    sdk.Signer
+	peer      SyncPeer
 	log       sdk.Logger
 	processor BlockProcessor
 
@@ -35,22 +31,20 @@ type BlockHeightReader interface {
 	BlockNumber(context.Context) (uint64, error)
 }
 
+type SyncPeer interface {
+	SubscribeBlocks(context.Context, uint64, BlockProcessor) error
+	BlockHeight(context.Context) (uint64, error)
+	Close() error
+}
+
 // NewSynchronizer creates a new synchronizer.
-func NewSynchronizer(db BlockHeightReader, channel string, conf PeerConf, signer sdk.Signer, processor BlockProcessor, logger sdk.Logger) (*Synchronizer, error) {
-	if len(conf.Address) == 0 {
-		return nil, errors.New("peer address required")
+func NewSynchronizer(db BlockHeightReader, peer SyncPeer, processor BlockProcessor, logger sdk.Logger) (*Synchronizer, error) {
+	if peer == nil {
+		return nil, errors.New("peer required")
 	}
-
-	peer, err := newPeerFromConf(conf)
-	if err != nil {
-		return nil, err
-	}
-
 	return &Synchronizer{
 		db:        db,
 		peer:      peer,
-		signer:    signer,
-		channel:   channel,
 		log:       logger,
 		processor: processor,
 	}, nil
@@ -89,7 +83,7 @@ func (s *Synchronizer) Start(ctx context.Context) error {
 
 		s.log.Infof("starting synchronization from block %d...", start)
 		s.syncing.Store(true)
-		err = s.peer.SubscribeBlocks(ctx, s.channel, start, s.signer, s.processor)
+		err = s.peer.SubscribeBlocks(ctx, start, s.processor)
 		s.syncing.Store(false)
 		if err != nil {
 			s.lastSyncErr.Store(&err)
@@ -113,24 +107,9 @@ func (s *Synchronizer) BlockHeight(ctx context.Context) (uint64, error) {
 	return lpb + 1, nil
 }
 
-// PeerBlockHeight only works on Fabric, not on Fabric-X.
+// PeerBlockHeight returns the peer's current blockchain height.
 func (s *Synchronizer) PeerBlockHeight(ctx context.Context) (uint64, error) {
-	prop, err := NewSignedProposal(s.signer, s.channel, "qscc", "1.0", [][]byte{[]byte("GetChainInfo"), []byte(s.channel)})
-	if err != nil {
-		return 0, err
-	}
-	res, err := s.peer.ProcessProposal(ctx, prop)
-	if err != nil {
-		return 0, err
-	}
-
-	info := &common.BlockchainInfo{}
-	err = proto.Unmarshal(res.Response.Payload, info)
-	if err != nil {
-		return 0, err
-	}
-
-	return info.Height, nil
+	return s.peer.BlockHeight(ctx)
 }
 
 // WaitUntilSynced blocks until the synchronizer has processed all blocks up to the peer's current height.
