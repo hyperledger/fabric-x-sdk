@@ -16,14 +16,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"path"
 	"testing"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	bfab "github.com/hyperledger/fabric-x-sdk/blocks/fabric"
-	bfabx "github.com/hyperledger/fabric-x-sdk/blocks/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
@@ -112,8 +111,14 @@ func newWithTestBackend(t *testing.T, networkType string, batching ...fabrictest
 		NetworkType: networkType,
 		Channel:     "mychannel",
 		Namespace:   "basic",
-		Peer:        network.PeerConf{Address: nw.PeerAddr},
-		Orderers:    []network.OrdererConf{{Address: nw.OrdererAddr}},
+		Peer: network.PeerConf{
+			Address: nw.PeerAddr,
+			TLS:     network.TLSConfig{Mode: network.TLSModeNone},
+		},
+		Orderers: []network.OrdererConf{{
+			Address: nw.OrdererAddr,
+			TLS:     network.TLSConfig{Mode: network.TLSModeNone},
+		}},
 	}
 
 	return newSetup(t, networkType, cfg)
@@ -123,22 +128,32 @@ func newWithTestBackend(t *testing.T, networkType string, batching ...fabrictest
 // It calls t.Skip if the committer is not reachable (start with: make start-x).
 func newTestCommitterSetup(t *testing.T) *testSetup {
 	t.Helper()
+	cryptoBase := path.Join("..", "testdata", "crypto", "peerOrganizations", "Org1")
+	committer := path.Join(cryptoBase, "peers", "committer.org1.example.com")
+	user := path.Join(cryptoBase, "users", "User1@org1.example.com")
+
 	cfg := config{
 		Channel:   "mychannel",
 		Namespace: "basic",
 		Orderers: []network.OrdererConf{{
-			Address:        "127.0.0.1:7050",
-			TLSPath:        "../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt",
-			ClientCertPath: "../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt",
-			ClientKeyPath:  "../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key",
+			Address: "127.0.0.1:7050",
+			TLS: network.TLSConfig{
+				Mode:        network.TLSModeMTLS,
+				CertPath:    path.Join(user, "tls", "client.crt"),
+				KeyPath:     path.Join(user, "tls", "client.key"),
+				CACertPaths: []string{path.Join(committer, "tls", "ca.crt")},
+			},
 		}},
 		Peer: network.PeerConf{
-			Address:        "127.0.0.1:4001",
-			TLSPath:        "../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt",
-			ClientCertPath: "../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt",
-			ClientKeyPath:  "../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key",
+			Address: "127.0.0.1:4001",
+			TLS: network.TLSConfig{
+				Mode:        network.TLSModeMTLS,
+				CertPath:    path.Join(user, "tls", "client.crt"),
+				KeyPath:     path.Join(user, "tls", "client.key"),
+				CACertPaths: []string{path.Join(committer, "tls", "ca.crt")},
+			},
 		},
-		SignerMSPDir: "../testdata/crypto/peerOrganizations/Org1/users/channel_admin@org1.example.com/msp",
+		SignerMSPDir: path.Join(user, "msp"),
 		SignerMSPID:  "Org1MSP",
 	}
 
@@ -174,33 +189,32 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	}
 	t.Cleanup(func() { localDB.Close() }) //nolint:errcheck
 
-	var parser blocks.BlockParser
 	var builder endorsement.Builder
 	var submitter *network.FabricSubmitter
+	var sync *network.Synchronizer
 	switch networkType {
 	case "fabric":
-		parser = bfab.NewBlockParser(log)
 		builder = efab.NewEndorsementBuilder(signer)
+		sync, err = nfab.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB)
+		if err != nil {
+			t.Fatalf("NewSynchronizaer: %v", err)
+		}
 		submitter, err = nfab.NewSubmitter(cfg.Orderers, signer, 0, log)
 	case "fabric-x":
-		parser = bfabx.NewBlockParser(log)
 		builder = efabx.NewEndorsementBuilder(signer)
+		sync, err = nfabx.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB)
+		if err != nil {
+			t.Fatalf("NewSynchronizaer: %v", err)
+		}
 		submitter, err = nfabx.NewSubmitter(cfg.Orderers, signer, 0, log)
 	}
 	if err != nil {
 		t.Fatalf("NewSubmitter: %v", err)
 	}
+
+	go sync.Start(t.Context())              //nolint:errcheck
+	t.Cleanup(func() { sync.Close() })      //nolint:errcheck
 	t.Cleanup(func() { submitter.Close() }) //nolint:errcheck
-
-	// Synchronizer processes and stores blocks.
-	processor := blocks.NewProcessor(parser, []blocks.BlockHandler{localDB})
-	sync, err := network.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, processor, log)
-	if err != nil {
-		t.Fatalf("NewSynchronizer: %v", err)
-	}
-
-	go sync.Start(t.Context())         //nolint:errcheck
-	t.Cleanup(func() { sync.Close() }) //nolint:errcheck
 
 	return &testSetup{
 		channel:           cfg.Channel,

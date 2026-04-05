@@ -10,12 +10,9 @@ package network
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +30,43 @@ type TxPackager interface {
 	PackageTx(sdk.Endorsement) (*common.Envelope, error)
 }
 
+// OrdererConf tells the submitter how to reach an orderer.
+type OrdererConf struct {
+	Address string
+	TLS     TLSConfig
+}
+
+func NewOrderer(c OrdererConf) (*Orderer, error) {
+	if err := c.TLS.Validate(); err != nil {
+		return nil, fmt.Errorf("orderer %s: invalid TLS config: %w", c.Address, err)
+	}
+
+	host, _, err := net.SplitHostPort(c.Address)
+	if err != nil {
+		return nil, fmt.Errorf("orderer %s: address must contain port: %w", c.Address, err)
+	}
+
+	creds := insecure.NewCredentials()
+	if c.TLS.Mode != "" && c.TLS.Mode != TLSModeNone {
+		tlsCfg, err := c.TLS.LoadClientTLSConfig(host)
+		if err != nil {
+			return nil, fmt.Errorf("orderer %s: failed to load TLS config: %w", c.Address, err)
+		}
+		creds = credentials.NewTLS(tlsCfg)
+	}
+
+	conn, err := grpc.NewClient(c.Address, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		return nil, fmt.Errorf("dial orderer %s: %w", c.Address, err)
+	}
+
+	return &Orderer{
+		conn:   conn,
+		client: orderer.NewAtomicBroadcastClient(conn),
+		addr:   c.Address,
+	}, nil
+}
+
 // FabricSubmitter can be used on both Fabric and Fabric-X.
 type FabricSubmitter struct {
 	orderers []*Orderer
@@ -42,47 +76,22 @@ type FabricSubmitter struct {
 	waitAfterSubmit time.Duration
 }
 
-// OrdererConf tells the submitter how to reach an orderer.
-type OrdererConf struct {
-	Address        string // Address and port
-	TLSPath        string // CA cert path for server TLS verification (optional)
-	ClientCertPath string // client cert path for mTLS (optional)
-	ClientKeyPath  string // client key path for mTLS (optional)
-}
-
 func NewSubmitter(config []OrdererConf, packager TxPackager, waitAfterSubmit time.Duration, logger sdk.Logger) (*FabricSubmitter, error) {
 	if len(config) == 0 {
 		return nil, errors.New("no orderers configured")
 	}
 
-	or := make([]*Orderer, len(config))
-	for i, o := range config {
-		var caPem, clientCert, clientKey []byte
-		var err error
-		if len(o.TLSPath) > 0 {
-			caPem, err = os.ReadFile(o.TLSPath)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if len(o.ClientCertPath) > 0 {
-			clientCert, err = os.ReadFile(o.ClientCertPath)
-			if err != nil {
-				return nil, err
-			}
-			clientKey, err = os.ReadFile(o.ClientKeyPath)
-			if err != nil {
-				return nil, err
-			}
-		}
-		or[i], err = NewOrderer(o.Address, caPem, clientCert, clientKey)
-		if err != nil {
+	orderers := make([]*Orderer, len(config))
+	for i, cfg := range config {
+		if o, err := NewOrderer(cfg); err != nil {
 			return nil, err
+		} else {
+			orderers[i] = o
 		}
 	}
 
 	return &FabricSubmitter{
-		orderers:        or,
+		orderers:        orderers,
 		packager:        packager,
 		logger:          logger,
 		waitAfterSubmit: waitAfterSubmit,
@@ -135,40 +144,6 @@ type Orderer struct {
 	conn   *grpc.ClientConn
 	client orderer.AtomicBroadcastClient
 	addr   string
-}
-
-// NewOrderer dials an orderer with optional TLS (caPem is the server CA cert) or mTLS.
-func NewOrderer(addr string, caPem, clientCert, clientKey []byte) (*Orderer, error) {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, fmt.Errorf("orderer address [%s] must contain port: %w", addr, err)
-	}
-	creds := insecure.NewCredentials()
-	if len(caPem) > 0 {
-		roots := x509.NewCertPool()
-		if ok := roots.AppendCertsFromPEM(caPem); !ok {
-			return nil, fmt.Errorf("failed to append orderer TLS cert")
-		}
-		tlsCfg := &tls.Config{RootCAs: roots, ServerName: host}
-		if len(clientCert) > 0 {
-			cert, err := tls.X509KeyPair(clientCert, clientKey)
-			if err != nil {
-				return nil, fmt.Errorf("orderer mTLS key pair: %w", err)
-			}
-			tlsCfg.Certificates = []tls.Certificate{cert}
-		}
-		creds = credentials.NewTLS(tlsCfg)
-	}
-
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
-	if err != nil {
-		return nil, fmt.Errorf("dial orderer: %w", err)
-	}
-	return &Orderer{
-		conn:   conn,
-		client: orderer.NewAtomicBroadcastClient(conn),
-		addr:   addr,
-	}, nil
 }
 
 // Broadcast sends a signed envelope with an endorsed EndorserTransaction for ordering.
