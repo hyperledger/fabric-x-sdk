@@ -17,6 +17,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"google.golang.org/grpc"
 
@@ -92,8 +93,11 @@ func Start(namespace, networkType string, cfg BatchingConfig) (*Network, error) 
 	n.orderer = newTestOrderer(n.ledger, cfg)
 
 	// grpc endpoints
+	testPeer := newTestPeer(n.ledger)
 	orderer.RegisterAtomicBroadcastServer(n.oSrv, n.orderer)
-	peer.RegisterDeliverServer(n.pSrv, newTestPeer(n.ledger))
+	peer.RegisterDeliverServer(n.pSrv, testPeer)
+	peer.RegisterEndorserServer(n.pSrv, testPeer)
+	committerpb.RegisterBlockQueryServiceServer(n.pSrv, testPeer)
 
 	go n.oSrv.Serve(ordererLis)
 	go n.pSrv.Serve(peerLis)

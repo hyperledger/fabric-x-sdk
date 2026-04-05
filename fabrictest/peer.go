@@ -7,21 +7,33 @@ SPDX-License-Identifier: Apache-2.0
 package fabrictest
 
 import (
+	"context"
 	"errors"
+	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	"github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
+	"github.com/hyperledger/fabric/protoutil"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func newTestPeer(ledger *ledger) *testPeer {
-	return &testPeer{ledger: ledger}
+	return &testPeer{
+		ledger:  ledger,
+		builder: fabric.NewEndorsementBuilder(&testSigner{}),
+	}
 }
 
 type testPeer struct {
-	ledger *ledger
+	ledger  *ledger
+	builder endorsement.Builder
+	committerpb.UnimplementedBlockQueryServiceServer
 }
 
 // parseStartBlock extracts the requested start block number from the seek envelope.
@@ -112,3 +124,61 @@ func (p *testPeer) DeliverFiltered(peer.Deliver_DeliverFilteredServer) error {
 func (p *testPeer) DeliverWithPrivateData(grpc.BidiStreamingServer[common.Envelope, peer.DeliverResponse]) error {
 	return errors.New("not implemented")
 }
+
+// -- Fabric
+
+// ProcessProposal implements the Fabric Endorser API for processing proposals.
+// It only handles qscc GetChainInfo requests to return blockchain height.
+func (p *testPeer) ProcessProposal(ctx context.Context, prop *peer.SignedProposal) (*peer.ProposalResponse, error) {
+	// Parse the proposal
+	inv, err := endorsement.Parse(prop, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if this is a qscc GetChainInfo request
+	if inv.CCID.Name != "qscc" || len(inv.Args) == 0 || string(inv.Args[0]) != "GetChainInfo" {
+		return nil, errors.New("only qscc GetChainInfo is supported in fabrictest")
+	}
+
+	// Return ProposalResponse with the ledger height and mocked hashes as payload, just as a Fabric peer would respond.
+	return p.builder.Endorse(inv, endorsement.ExecutionResult{
+		Status: 200,
+		Payload: protoutil.MarshalOrPanic(&common.BlockchainInfo{
+			Height:            p.ledger.height(),
+			CurrentBlockHash:  []byte("current-block-hash"),
+			PreviousBlockHash: []byte("previous-block-hash"),
+		}),
+	})
+}
+
+// Fabric-X
+
+// GetBlockchainInfo implements the Fabric-X BlockQueryService for getting blockchain height
+func (p *testPeer) GetBlockchainInfo(ctx context.Context, _ *emptypb.Empty) (*common.BlockchainInfo, error) {
+	height := p.ledger.height()
+	return &common.BlockchainInfo{
+		Height: height,
+	}, nil
+}
+
+// GetBlockByNumber implements the Fabric-X BlockQueryService for getting a specific block
+func (p *testPeer) GetBlockByNumber(ctx context.Context, req *committerpb.BlockNumber) (*common.Block, error) {
+	return nil, errors.New("GetBlockByNumber not implemented in fabrictest")
+}
+
+// GetBlockByTxID implements the Vabric-X BlockQueryService for getting a block by transaction ID
+func (p *testPeer) GetBlockByTxID(ctx context.Context, req *committerpb.TxID) (*common.Block, error) {
+	return nil, errors.New("GetBlockByTxID not implemented in fabrictest")
+}
+
+// GetTxByID implements the Dabric-X BlockQueryService for getting a transaction by ID
+func (p *testPeer) GetTxByID(ctx context.Context, req *committerpb.TxID) (*common.Envelope, error) {
+	return nil, errors.New("GetTxByID not implemented in fabrictest")
+}
+
+// testSigner is a minimal sdk.Signer that returns fixed bytes.
+type testSigner struct{}
+
+func (testSigner) Sign(_ []byte) ([]byte, error) { return []byte("sig"), nil }
+func (testSigner) Serialize() ([]byte, error)    { return []byte("identity"), nil }
