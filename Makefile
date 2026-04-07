@@ -39,8 +39,6 @@ start-x:
 		docker.io/hyperledger/fabric-x-committer-test-node:0.1.9 run db orderer committer
 	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
 	@go tool fxconfig namespace create basic --policy="OR('Org1MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
-	@until go tool fxconfig namespace list --config=testdata/fxconfig.yaml 2>/dev/null | grep -q basic; do sleep 1; echo "waiting for namespace to be created..."; done
-	@go tool fxconfig namespace list --config=testdata/fxconfig.yaml
 
 .PHONY: test-x
 test-x:

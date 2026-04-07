@@ -19,7 +19,6 @@ import (
 
 	"github.com/hyperledger/fabric-lib-go/bccsp/utils"
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
-	"github.com/hyperledger/fabric-x-common/api/msppb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -82,12 +81,6 @@ func sign(k *ecdsa.PrivateKey, message []byte) ([]byte, error) {
 
 func (s Signer) Serialize() ([]byte, error) {
 	return proto.Marshal(&msp.SerializedIdentity{Mspid: s.mspID, IdBytes: s.signcert})
-}
-
-// MSPIdentity returns the msppb.Identity for this signer, suitable for use in
-// Fabric-X EndorsementWithIdentity. This implements the nfabx.IdentityProvider interface.
-func (s Signer) MSPIdentity() *msppb.Identity {
-	return msppb.NewIdentity(s.mspID, s.signcert)
 }
 
 func parsePrivateKey(privPEM []byte) (*ecdsa.PrivateKey, error) {

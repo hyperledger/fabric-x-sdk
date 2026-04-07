@@ -124,8 +124,7 @@ func newWithTestBackend(t *testing.T, networkType string, batching ...fabrictest
 	return newSetup(t, networkType, cfg)
 }
 
-// newTestCommitterSetup returns a testSetup pointed at a running Fabric-X committer.
-// It calls t.Skip if the committer is not reachable (start with: make start-x).
+// newTestCommitterSetup returns a testSetup pointed at a running Fabric-X test committer.
 func newTestCommitterSetup(t *testing.T) *testSetup {
 	t.Helper()
 	cryptoBase := path.Join("..", "testdata", "crypto", "peerOrganizations", "Org1")
@@ -213,8 +212,9 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	}
 
 	go sync.Start(t.Context())              //nolint:errcheck
-	t.Cleanup(func() { sync.Close() })      //nolint:errcheck
 	t.Cleanup(func() { submitter.Close() }) //nolint:errcheck
+
+	waitUntilSynced(t, sync, 10*time.Second)
 
 	return &testSetup{
 		channel:           cfg.Channel,
@@ -225,6 +225,23 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		signer:            signer,
 		builder:           builder,
 		submitter:         submitter,
+	}
+}
+
+func waitUntilSynced(t *testing.T, sync *network.Synchronizer, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+
+	for {
+		if err := sync.Ready(); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("timeout waiting for sync")
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 }
 
