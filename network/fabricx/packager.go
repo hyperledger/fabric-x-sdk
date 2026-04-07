@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/api/msppb"
@@ -22,13 +23,6 @@ import (
 	"github.com/hyperledger/fabric/protoutil"
 	"google.golang.org/protobuf/proto"
 )
-
-// IdentityProvider may be implemented by a sdk.Signer to supply an msppb.Identity
-// for Fabric-X EndorsementWithIdentity. If not implemented, Identity is left nil
-// (sufficient for mock/test networks that don't verify signatures).
-type IdentityProvider interface {
-	MSPIdentity() *msppb.Identity
-}
 
 func NewTxPackager(s sdk.Signer) TxPackager {
 	return TxPackager{
@@ -122,16 +116,18 @@ func CreateSignedTx(
 	if err := proto.Unmarshal(a1, &tx); err != nil {
 		return nil, fmt.Errorf("expected applicationpb.Tx endorsement payload, %s", err.Error())
 	}
-	var mspIdentity *msppb.Identity
-	if ip, ok := signer.(IdentityProvider); ok {
-		mspIdentity = ip.MSPIdentity()
-	}
 	nsEndorsements := &applicationpb.Endorsements{}
 	for _, end := range endorsements {
+		// Deserialize the endorser identity (format is the same between Fabric and Fabric-X)
+		var endorserIdentity *msppb.Identity
+		var si msp.SerializedIdentity
+		if err := proto.Unmarshal(end.Endorser, &si); err == nil && si.Mspid != "" {
+			endorserIdentity = msppb.NewIdentity(si.Mspid, si.IdBytes)
+		}
 		nsEndorsements.EndorsementsWithIdentity = append(nsEndorsements.EndorsementsWithIdentity,
 			&applicationpb.EndorsementWithIdentity{
 				Endorsement: end.Signature,
-				Identity:    mspIdentity,
+				Identity:    endorserIdentity,
 			},
 		)
 	}
