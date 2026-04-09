@@ -1,0 +1,41 @@
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+# Channel and namespace must match the endorser and committer configuration.
+channel-id: mychannel
+namespace: basic
+
+# Protocol must match the endorser and ordering service.
+protocol: fabric-x
+
+# MSP identity used to sign the proposal and the transaction envelope.
+identity:
+  msp-id: Org1MSP
+  msp-dir: ../../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/msp
+
+# One entry per endorser organization.
+# Each endorser has its own TLS configuration because it runs under a different CA.
+endorsers:
+  - endpoint:
+      host: localhost
+      port: 9001
+    tls:
+      mode: mtls
+      cert-path: ../../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.crt
+      key-path: ../../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.key
+      ca-cert-paths:
+        - ../../testdata/crypto/peerOrganizations/Org1/tlsca/tlsca.org1.example.com-cert.pem
+
+# Ordering service endpoint.
+orderer:
+  endpoint:
+    host: localhost
+    port: 7050
+  tls:
+    mode: mtls
+    cert-path: ../../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.crt
+    key-path: ../../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.key
+    ca-cert-paths:
+      - ../../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt

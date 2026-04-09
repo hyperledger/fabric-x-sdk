@@ -1,0 +1,62 @@
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+# Channel for the network
+channel-id: mychannel
+
+# The namespace that this endorser tracks and can endorse for. 
+namespace: basic
+
+# Type of network (fabric or fabric-x)
+protocol: fabric-x
+
+# sqlite connection string.
+database:
+  connection-string: file:endorser.sqlite?mode=memory&cache=shared
+
+# Main gRPC server configuration
+server:
+  # Server listening address and port
+  endpoint:
+    host: localhost
+    port: 9001
+
+  # TLS configuration
+  # Supported modes: "none", "tls" (one-sided), "mtls" (mutual TLS)
+  tls:
+    mode: mtls
+    cert-path: ../../testdata/crypto/peerOrganizations/Org1/peers/endorser.org1.example.com/tls/server.crt
+    key-path: ../../testdata/crypto/peerOrganizations/Org1/peers/endorser.org1.example.com/tls/server.key
+    ca-cert-paths:
+      - ../../testdata/crypto/peerOrganizations/Org1/tlsca/tlsca.org1.example.com-cert.pem
+      - ../../testdata/crypto/peerOrganizations/Org2/tlsca/tlsca.org2.example.com-cert.pem
+
+# Fabric MSP identity to connect to committer and to endorse
+identity:
+  msp-id: Org1MSP
+  msp-dir: ../../testdata/crypto/peerOrganizations/Org1/peers/endorser.org1.example.com/msp
+
+# The committer is the peer (Fabric) or sidecar endpoint (Fabric-X) that the endorser connects to to sync world state.
+committer:
+  endpoint:
+    host: localhost
+    port: 4001
+  tls:
+    mode: mtls
+    cert-path: ../../testdata/crypto/peerOrganizations/Org1/peers/endorser.org1.example.com/tls/server.crt
+    key-path: ../../testdata/crypto/peerOrganizations/Org1/peers/endorser.org1.example.com/tls/server.key
+    ca-cert-paths:
+      - ../../testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+
+# Logging configuration
+logging:
+  # Log level specification. Can be a single level (e.g., "info", "debug") or
+  # module-specific levels (e.g., "info,sidecar=debug").
+  # Valid levels: debug, info, warning, error, panic, fatal.
+  logSpec: info:grpc=error
+  # Log message format template. Supports color codes, timestamps, module names,
+  # function names, and log levels. See fabric-lib-go/common/flogging for details.
+  format: >-
+    %{color}%{time:2006-01-02 15:04:05.000 MST} [%{module}] %{shortfunc} -> %{level:.4s}%{color:reset} %{message}

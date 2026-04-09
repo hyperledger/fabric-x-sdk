@@ -1,0 +1,49 @@
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+# Channel and namespace must match the endorser and network configuration.
+channel-id: mychannel
+namespace: basic
+
+# Protocol must match the endorser and ordering service.
+protocol: fabric
+
+# MSP identity used to sign the proposal and the transaction envelope.
+identity:
+  msp-id: Org1MSP
+  msp-dir: ../../testdata/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
+
+# One entry per endorser organization.
+# Each endorser has its own TLS configuration because it runs under a different CA.
+endorsers:
+  - endpoint:
+      host: localhost
+      port: 9001
+    tls:
+      mode: mtls
+      cert-path: ../../testdata/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/tls/client.crt
+      key-path: ../../testdata/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/tls/client.key
+      ca-cert-paths:
+        - ../../testdata/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/tlsca/tlsca.org1.example.com-cert.pem
+
+  - endpoint:
+      host: localhost
+      port: 9002
+    tls:
+      mode: mtls
+      cert-path: ../../testdata/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/tls/client.crt
+      key-path: ../../testdata/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/tls/client.key
+      ca-cert-paths:
+        - ../../testdata/fabric-samples/test-network/organizations/peerOrganizations/org2.example.com/tlsca/tlsca.org2.example.com-cert.pem
+
+# Ordering service endpoint.
+orderer:
+  endpoint:
+    host: localhost
+    port: 7050
+  tls:
+    mode: tls
+    ca-cert-paths:
+      - ../../testdata/fabric-samples/test-network/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt
