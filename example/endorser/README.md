@@ -2,7 +2,7 @@
 
 This example demonstrates how the `fabric-x-sdk` can be used together with components of `fabric-x-common` and the `fabric-x-committer` to create a new Fabric or Fabric-X service.
 
-The Endorser service is analogous to endorsing peers running chaincode in Fabric, with the difference that the service does not commit blocks itself; it merely synchronizes its world state with a committing peer. The namespace which the endorser uses must exist, and its endorsement policy must be satisfied for the transaction to be committed after ordering. In Fabric 2 or 3 that means a chaincode -- any chaincode -- must be installed with the name of the namespace. In Fabric-X, the namespace can be created with `fxconfig`. Outside of that, the endorsers are free in how they construct their read/write sets.
+The Endorser service is analogous to endorsing peers running chaincode in Fabric, with the difference that the service does not commit blocks itself; it merely synchronizes its world state with a committing peer. The endorser is responsible for a single namespace. The endorsement policy determines how many (and which) endorser have to sign the update to the ledger for it to be committed. In classic Fabric that means a chaincode -- any chaincode -- must be installed with the name of the namespace. In Fabric-X, the namespace can be created with `fxconfig`. Outside of that, the endorsers are free in how they construct their read/write sets.
 
 Features:
 
@@ -11,6 +11,7 @@ Features:
 - Synchronizes world state from a committing peer
 - Generates and endorses (signs) read/write sets
 - Mutual TLS authentication
+- Client cli tool that contacts the endorsers and then the orderer to create a transaction.
 
 ## Quick Start
 
@@ -19,10 +20,13 @@ Features:
 From the repo root, run a fabric-x test committer and a single endorser:
 
 ```shell
+# start a fabric-x test network
 make start-x
 
+# start the example endorser services (in two different consoles)
 cd example/endorser/
-go run cmd/endorser/main.go -c config/fabx-endorser.yaml
+go run cmd/endorser/main.go -c sampleconfig/fabx-endorser1.yaml
+go run cmd/endorser/main.go -c sampleconfig/fabx-endorser2.yaml
 ```
 
 #### Test with the client CLI
@@ -34,39 +38,39 @@ In another terminal, execute the following commands to invoke a simple transacti
 
 ```shell
 # invoke: endorse and submit to the orderer
-go run cmd/client/main.go invoke -c config/fabx-client.yaml '{"Args":["set", "greeting", "hello world"]}'
+go run cmd/client/main.go -c sampleconfig/fabx-client.yaml invoke '{"Args":["set", "greeting", "hello world"]}'
 
 # query: endorse only, print the response payload
-go run cmd/client/main.go query -c config/fabx-client.yaml '{"Args":["get", "greeting"]}'
+go run cmd/client/main.go -c sampleconfig/fabx-client.yaml query '{"Args":["get", "greeting"]}'
 ```
 
 Note that `invoke` does not wait for finality; it returns after submitting to the orderer.
 
-### Run the Service: Fabric 3
+### Run the Service: classic Fabric
 
 > [!NOTE]
-> Instructions to run Fabric 3 will be added later. The following instructions
+> Instructions to run Fabric will be added later. The following instructions
 > assume a fabric-samples network running in `../../testdata/fabric-samples`,
 > similar to how it's started in [fabric-x-evm](https://github.com/hyperledger/fabric-x-evm).
 
 ```shell
-go run cmd/endorser/main.go -c config/fab3-endorser1.yaml
-go run cmd/endorser/main.go -c config/fab3-endorser2.yaml
+go run cmd/endorser/main.go -c sampleconfig/fab-endorser1.yaml
+go run cmd/endorser/main.go -c sampleconfig/fab-endorser2.yaml
 ```
 
-#### Test on Fabric 3
+#### Test on classic Fabric
 
-For this example, we're using the `peer` CLI. This CLI only works if we use Fabric 3 as a backend; it submits transactions in a format that Fabric-X cannot parse. Use the client CLI above for Fabric-X.
+For this example, we're using the `peer` CLI. This CLI only works if we use classic Fabric as a backend; it submits transactions in a format that Fabric-X cannot parse. Use the client CLI above for Fabric-X.
 
 ##### Invoke (set greeting)
 
 ```shell
-ROOT=$(realpath ../..)
-ORG1=$ROOT/testdata/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com
-ORG2=$ROOT/testdata/fabric-samples/test-network/organizations/peerOrganizations/org2.example.com
-ORDERER=$ROOT/testdata/fabric-samples/test-network/organizations/ordererOrganizations/example.com
+SAMPLES="$(realpath ../../testdata/fabric-samples)"
+ORG1=$SAMPLES/test-network/organizations/peerOrganizations/org1.example.com
+ORG2=$SAMPLES/test-network/organizations/peerOrganizations/org2.example.com
+ORDERER=$SAMPLES/test-network/organizations/ordererOrganizations/example.com
 
-FABRIC_CFG_PATH=$ROOT/testdata/fabric-samples/config \
+FABRIC_CFG_PATH=$SAMPLES/config \
 GRPC_ENFORCE_ALPN_ENABLED=false \
 CORE_PEER_LOCALMSPID=Org1MSP \
 CORE_PEER_MSPCONFIGPATH=$ORG1/users/Admin@org1.example.com/msp \
@@ -92,10 +96,10 @@ peer chaincode invoke \
 ##### Query (get greeting)
 
 ```shell
-ROOT=$(realpath ../..)
-ORG1=$ROOT/testdata/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com
+SAMPLES="$(realpath ../../testdata/fabric-samples)"
+ORG1=$SAMPLES/test-network/organizations/peerOrganizations/org1.example.com
 
-FABRIC_CFG_PATH=$ROOT/testdata/fabric-samples/config \
+FABRIC_CFG_PATH=$SAMPLES/config \
 GRPC_ENFORCE_ALPN_ENABLED=false \
 CORE_PEER_LOCALMSPID=Org1MSP \
 CORE_PEER_MSPCONFIGPATH=$ORG1/users/Admin@org1.example.com/msp \
@@ -129,8 +133,7 @@ The service supports three TLS modes:
 All configuration can be overridden via environment variables with the `ENDORSER_` prefix:
 
 ```shell
-export ENDORSER_SERVER_ENDPOINT=:8080
-go run cmd/endorser/main.go
+export ENDORSER_SERVER_ENDPOINT_PORT=8080 go run cmd/endorser/main.go -c sampleconfig/fab-endorser1.yaml
 ```
 
 ## Project Structure
@@ -140,9 +143,9 @@ go run cmd/endorser/main.go
 │   ├── endorser/        # Endorser service entry point
 │   └── client/          # Developer client CLI entry point
 ├── internal/
-│   ├── config/          # Service configuration structures
+│   ├── sampleconfig/          # Service configuration structures
 │   └── service/         # Service implementation and integration tests
-├── config/              # Sample configuration files
+├── sampleconfig/              # Sample configuration files
 ├── go.mod
 └── README.md
 ```
@@ -163,3 +166,36 @@ This example uses the **fabric-x-sdk** for Fabric integration:
 ### Fabric-X Committer
 
 - `utils/connection` - GRPC server setup
+
+# Client CLI (example implementation)
+
+The endorser client is a minimal developer debugging CLI that shows how to use the SDK's
+`EndorsementClient` and `FabricSubmitter` to drive a full transaction end-to-end. It is
+the client-side counterpart to the endorser service: propose a transaction, collect
+endorsements, and submit to the orderer.
+
+Configuration is a single YAML file that lists the endorser and orderer endpoints along
+with the MSP identity used for signing. Sample configs are in the `config/` folder of
+the endorser example:
+
+| Config file               | Network        |
+| ------------------------- | -------------- |
+| `config/fabx-client.yaml` | Fabric-X       |
+| `config/fab-client.yaml`  | Classic Fabric |
+
+```shell
+# write a value (endorse + submit)
+go run ./cmd/client invoke -c config/fabx-client.yaml '{"function":"set","Args":["greeting","hello world"]}'
+
+# read a value (endorse only, prints payload)
+go run ./cmd/client query -c config/fabx-client.yaml '{"function":"get","Args":["greeting"]}'
+```
+
+The transaction argument follows the Fabric peer CLI convention: a JSON object with a
+`function` key and an `Args` array, or just an `Args` array with the function as first argument.
+
+`query` sends a proposal to the endorsers and prints the response payload. It does not
+submit to the orderer.
+
+`invoke` sends a proposal to the endorsers and submits the resulting transaction to the
+orderer. It does not wait for finality.

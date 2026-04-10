@@ -8,11 +8,13 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-committer/utils/connection"
+	"github.com/hyperledger/fabric-x-sdk/network"
 )
 
 // Config holds all configuration for the endorser
@@ -55,6 +57,32 @@ type ClientConfig struct {
 	TLS      TLSConfig `mapstructure:"tls"       yaml:"tls"`
 }
 
+// ToPeerConf converts a ClientConfig to the SDK's PeerConf.
+func (c ClientConfig) ToPeerConf() network.PeerConf {
+	return network.PeerConf{
+		Address: c.Endpoint.Address(),
+		TLS: network.TLSConfig{
+			Mode:        c.TLS.Mode,
+			CertPath:    c.TLS.CertPath,
+			KeyPath:     c.TLS.KeyPath,
+			CACertPaths: c.TLS.CACertPaths,
+		},
+	}
+}
+
+// ToOrdererConf converts a ClientConfig to the SDK's OrdererConf.
+func (c ClientConfig) ToOrdererConf() network.OrdererConf {
+	return network.OrdererConf{
+		Address: c.Endpoint.Address(),
+		TLS: network.TLSConfig{
+			Mode:        c.TLS.Mode,
+			CertPath:    c.TLS.CertPath,
+			KeyPath:     c.TLS.KeyPath,
+			CACertPaths: c.TLS.CACertPaths,
+		},
+	}
+}
+
 // TLSConfig holds the TLS options and certificate paths
 // used for secure communication between servers and clients.
 // Credentials are built based on the configuration mode.
@@ -77,6 +105,11 @@ type Endpoint struct {
 
 // Address returns a string representation of the endpoint's address.
 func (e *Endpoint) Address() string {
+	// JoinHostPort defaults to ipv6 for localhost,
+	// which is not always wanted.
+	if e.Host == "localhost" {
+		return fmt.Sprintf("%s:%d", e.Host, e.Port)
+	}
 	return net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
 }
 

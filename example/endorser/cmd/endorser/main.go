@@ -37,6 +37,7 @@ and make is possible to add chaincode-like functionality to Fabric-X networks.`,
 
 	cmd.Flags().StringP("config", "c", "", "Path to configuration file")
 	cmd.Flags().String("log-level", "INFO", "Log level (DEBUG, INFO, WARNING, ERROR)")
+	cmd.MarkFlagRequired("config")
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -47,22 +48,17 @@ and make is possible to add chaincode-like functionality to Fabric-X networks.`,
 func run(cmd *cobra.Command, args []string) error {
 	// Load configuration
 	parser := viperutil.New()
-	if configFile, _ := cmd.Flags().GetString("config"); configFile != "" {
-		f, err := os.Open(configFile)
-		if err != nil {
-			return fmt.Errorf("failed to open config: %w", err)
-		}
-		defer f.Close()
-		if err := parser.ReadConfig(f); err != nil {
-			return fmt.Errorf("failed to read config: %w", err)
-		}
-	} else {
-		parser.SetConfigName("endorser")
-		parser.AddConfigPaths(".")
-		if err := parser.ReadInConfig(); err != nil {
-			return fmt.Errorf("failed to read config: %w", err)
-		}
+	parser.SetConfigName("endorser")
+	configFile, _ := cmd.Flags().GetString("config")
+	f, err := os.Open(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to open config: %w", err)
 	}
+	if err := parser.ReadConfig(f); err != nil {
+		f.Close()
+		return fmt.Errorf("failed to read config: %w", err)
+	}
+	f.Close()
 
 	// Parse and validate
 	var cfg config.Config
@@ -80,7 +76,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	flogging.Init(cfg.Logging)
 	logger := flogging.MustGetLogger("main")
-	logger.Infof("starting endorser with config from: %s", parser.ConfigFileUsed())
+	logger.Infof("starting endorser", parser.ConfigFileUsed())
 
 	// Create service
 	svc, err := service.New(cfg)

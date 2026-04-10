@@ -5,7 +5,7 @@
 
 # Channel and namespace must match the endorser and committer configuration.
 channel-id: mychannel
-namespace: basic
+namespace: two
 
 # Protocol must match the endorser and ordering service.
 protocol: fabric-x
@@ -27,6 +27,15 @@ endorsers:
       key-path: ../../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.key
       ca-cert-paths:
         - ../../testdata/crypto/peerOrganizations/Org1/tlsca/tlsca.org1.example.com-cert.pem
+  - endpoint:
+      host: localhost
+      port: 9002
+    tls:
+      mode: mtls
+      cert-path: ../../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.crt
+      key-path: ../../testdata/crypto/peerOrganizations/Org1/users/User1@org1.example.com/tls/client.key
+      ca-cert-paths:
+        - ../../testdata/crypto/peerOrganizations/Org2/tlsca/tlsca.org2.example.com-cert.pem
 
 # Ordering service endpoint.
 orderer:

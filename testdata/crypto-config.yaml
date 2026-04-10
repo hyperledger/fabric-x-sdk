@@ -8,7 +8,6 @@ OrdererOrgs:
     Specs:
       - Hostname: orderer
         SANS:
-          - 127.0.0.1
           - 0.0.0.0
           - localhost
           - 127.0.0.1
@@ -69,7 +68,7 @@ PeerOrgs:
         - Name: User2
           HSM: false
     Specs:
-      - Hostname: SC
+      - Hostname: endorser
         SANS:
           - 0.0.0.0
           - localhost

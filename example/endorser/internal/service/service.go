@@ -189,7 +189,7 @@ func (s *Service) ProcessProposal(ctx context.Context, prop *peer.SignedProposal
 }
 
 // WaitForReady implements connection.Service interface.
-// The endorser waits until it's blockheight is equal to the committing peer it's connected to.
+// The endorser waits until its blockheight is equal to the committing peer it's connected to.
 func (s *Service) WaitForReady(ctx context.Context) bool {
 	for {
 		if err := s.synchronizer.Ready(); err == nil {

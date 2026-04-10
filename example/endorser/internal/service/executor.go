@@ -50,7 +50,7 @@ func (e SampleExecutor) Execute(ctx context.Context, inv endorsement.Invocation)
 				Value: inv.Args[2],
 			},
 		}}
-		return endorsement.Success(rws, nil, []byte(fmt.Sprintf("endorsing a blind write setting '%s' to '%s'", string(inv.Args[1]), string(inv.Args[2])))), nil
+		return endorsement.Success(rws, nil, fmt.Appendf(nil, "%s=%s", string(inv.Args[1]), string(inv.Args[2]))), nil
 	default:
 		return endorsement.BadRequest("usage: get [key] || set [key] [value]"), nil
 	}

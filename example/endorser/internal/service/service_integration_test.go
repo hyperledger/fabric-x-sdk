@@ -11,7 +11,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
-	"strconv"
 	"testing"
 	"time"
 
@@ -63,14 +62,11 @@ type endorserSetup struct {
 func newWithTestBackend(t *testing.T, networkType string) *endorserSetup {
 	t.Helper()
 
-	fnet, err := fabrictest.Start("basic", networkType, fabrictest.BatchingConfig{})
+	fnet, err := fabrictest.Start("basic", networkType, fabrictest.Config{})
 	if err != nil {
 		t.Fatalf("fabrictest.Start: %v", err)
 	}
 	t.Cleanup(fnet.Stop)
-
-	peerHost, peerPort, _ := net.SplitHostPort(fnet.PeerAddr)
-	port, _ := strconv.Atoi(peerPort)
 
 	cfg := config.Config{
 		ChannelID: "mychannel",
@@ -78,11 +74,11 @@ func newWithTestBackend(t *testing.T, networkType string) *endorserSetup {
 		Protocol:  networkType,
 		Database:  config.DatabaseConfig{ConnStr: fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())},
 		Committer: config.ClientConfig{
-			Endpoint: &config.Endpoint{Host: peerHost, Port: port},
+			Endpoint: &config.Endpoint{Host: "127.0.0.1", Port: fnet.PeerPort},
 		},
 	}
 
-	return newSetup(t, cfg, testSigner{}, testSigner{}, fnet.OrdererAddr)
+	return newSetup(t, cfg, testSigner{}, testSigner{}, fmt.Sprintf("127.0.0.1:%d", fnet.OrdererPort))
 }
 
 // newTestCommitterSetup returns a test setup pointed at a running Fabric-X committer.
@@ -380,17 +376,11 @@ func testEndorserSetThenOverwrite(t *testing.T, s *endorserSetup) {
 // after the synchronizer has completed its initial sync with the peer.
 // This follows canonical Kubernetes readiness semantics.
 func TestWaitForReadyWaitsForSync(t *testing.T) {
-	fnet, err := fabrictest.Start("basic", "fabric-x", fabrictest.BatchingConfig{})
+	fnet, err := fabrictest.Start("basic", "fabric-x", fabrictest.Config{})
 	if err != nil {
 		t.Fatalf("fabrictest.Start: %v", err)
 	}
 	t.Cleanup(fnet.Stop)
-
-	peerHost, peerPort, err := net.SplitHostPort(fnet.PeerAddr)
-	if err != nil {
-		t.Fatalf("parse peer addr: %v", err)
-	}
-	port, _ := strconv.Atoi(peerPort)
 
 	cfg := config.Config{
 		ChannelID: "mychannel",
@@ -398,7 +388,7 @@ func TestWaitForReadyWaitsForSync(t *testing.T) {
 		Protocol:  "fabric-x",
 		Database:  config.DatabaseConfig{ConnStr: fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())},
 		Committer: config.ClientConfig{
-			Endpoint: &config.Endpoint{Host: peerHost, Port: port},
+			Endpoint: &config.Endpoint{Host: "127.0.0.1", Port: int(fnet.PeerPort)},
 		},
 	}
 	svc, err := service.NewWithSigner(cfg, testSigner{})

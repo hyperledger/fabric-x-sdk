@@ -10,14 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-common/common/viperutil"
+	"github.com/hyperledger/fabric-x-sdk/example/endorser/internal/config"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
@@ -38,53 +37,15 @@ type Config struct {
 	Protocol string `mapstructure:"protocol"`
 
 	// Identity is the MSP identity used for signing the proposal and the transaction.
-	Identity *IdentityConfig `mapstructure:"identity"`
+	Identity *config.IdentityConfig `mapstructure:"identity"`
 
 	// Endorsers is the list of endorser endpoints, one per organization.
 	// Each entry has its own TLS configuration because endorsers run at different orgs.
-	Endorsers []ClientConfig `mapstructure:"endorsers"`
+	Endorsers []config.ClientConfig `mapstructure:"endorsers"`
 
 	// Orderer is the ordering service endpoint the signed transaction is submitted to.
 	// Required for invoke; ignored by query.
-	Orderer *ClientConfig `mapstructure:"orderer"`
-}
-
-// IdentityConfig defines the component's MSP.
-type IdentityConfig struct {
-	// MspID indicates to which MSP this client belongs to.
-	MspID  string `mapstructure:"msp-id" yaml:"msp-id"`
-	MSPDir string `mapstructure:"msp-dir" yaml:"msp-dir"`
-}
-
-// ClientConfig contains a single endpoint, TLS config, and retry profile.
-type ClientConfig struct {
-	Endpoint *Endpoint `mapstructure:"endpoint"  yaml:"endpoint"`
-	TLS      TLSConfig `mapstructure:"tls"       yaml:"tls"`
-}
-
-// TLSConfig holds the TLS options and certificate paths
-// used for secure communication between servers and clients.
-// Credentials are built based on the configuration mode.
-// For example, If only server-side TLS is required, the certificate pool (certPool) is not built (for a server),
-// since the relevant certificates paths are defined in the YAML according to the selected mode.
-type TLSConfig struct {
-	Mode string `mapstructure:"mode"`
-	// CertPath is the path to the certificate file (public key).
-	CertPath string `mapstructure:"cert-path"`
-	// KeyPath is the path to the key file (private key).
-	KeyPath     string   `mapstructure:"key-path"`
-	CACertPaths []string `mapstructure:"ca-cert-paths"`
-}
-
-// Endpoint describes a remote endpoint.
-type Endpoint struct {
-	Host string `mapstructure:"host" json:"host,omitempty" yaml:"host,omitempty"`
-	Port int    `mapstructure:"port" json:"port,omitempty" yaml:"port,omitempty"`
-}
-
-// Address returns a string representation of the endpoint's address.
-func (e *Endpoint) Address() string {
-	return net.JoinHostPort(e.Host, strconv.Itoa(e.Port))
+	Orderer *config.ClientConfig `mapstructure:"orderer"`
 }
 
 // txInput is the JSON format for the transaction argument.
@@ -98,7 +59,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root := &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "client",
 		Short: "Client - Example Fabric-X endorser client",
 		Long: `Client sends transaction proposals to endorser services and optionally
@@ -107,11 +68,12 @@ submits the results to an orderer.
   query  — endorse only; prints the response payload (read-only)
   invoke — endorse and submit to the orderer (write)`,
 	}
-	root.PersistentFlags().StringP("config", "c", "", "Path to configuration file")
+	cmd.PersistentFlags().StringP("config", "c", "", "Path to configuration file")
+	cmd.MarkFlagRequired("config")
 
-	root.AddCommand(newQueryCmd(), newInvokeCmd())
+	cmd.AddCommand(newQueryCmd(), newInvokeCmd())
 
-	if err := root.ExecuteContext(ctx); err != nil {
+	if err := cmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -150,7 +112,7 @@ func newQueryCmd() *cobra.Command {
 			if resp.Status < 200 || resp.Status >= 400 {
 				return fmt.Errorf("endorser returned error status %d: %s", resp.Status, resp.Message)
 			}
-			fmt.Print(string(resp.Payload))
+			cmd.Print(string(resp.Payload))
 			return nil
 		},
 	}
@@ -186,7 +148,7 @@ need to confirm that the transaction has been committed.`,
 			}
 			defer ec.Close() //nolint:errcheck
 
-			ordererConfs := []network.OrdererConf{toOrdererConf(cfg.Orderer)}
+			ordererConfs := []network.OrdererConf{cfg.Orderer.ToOrdererConf()}
 			var submitter *network.FabricSubmitter
 			switch cfg.Protocol {
 			case "fabric":
@@ -219,7 +181,7 @@ need to confirm that the transaction has been committed.`,
 				return fmt.Errorf("submit failed: %w", err)
 			}
 			logger.Debugf("transaction submitted")
-			fmt.Print(string(resp.Payload))
+			cmd.Print(string(resp.Payload))
 			return nil
 		},
 	}
@@ -301,37 +263,11 @@ func validate(cfg Config) error {
 func buildEndorsementClient(cfg Config, signer identity.Signer) (*network.EndorsementClient, error) {
 	peerConfs := make([]network.PeerConf, len(cfg.Endorsers))
 	for i := range cfg.Endorsers {
-		peerConfs[i] = toPeerConf(&cfg.Endorsers[i])
+		peerConfs[i] = cfg.Endorsers[i].ToPeerConf()
 	}
 	ec, err := network.NewEndorsementClient(peerConfs, signer, cfg.ChannelID, cfg.Namespace, "1.0")
 	if err != nil {
 		return nil, fmt.Errorf("create endorsement client: %w", err)
 	}
 	return ec, nil
-}
-
-// toPeerConf converts a connection.ClientConfig to the SDK's PeerConf.
-func toPeerConf(cfg *ClientConfig) network.PeerConf {
-	return network.PeerConf{
-		Address: cfg.Endpoint.Address(),
-		TLS: network.TLSConfig{
-			Mode:        cfg.TLS.Mode,
-			CertPath:    cfg.TLS.CertPath,
-			KeyPath:     cfg.TLS.KeyPath,
-			CACertPaths: cfg.TLS.CACertPaths,
-		},
-	}
-}
-
-// toOrdererConf converts a connection.ClientConfig to the SDK's OrdererConf.
-func toOrdererConf(cfg *ClientConfig) network.OrdererConf {
-	return network.OrdererConf{
-		Address: cfg.Endpoint.Address(),
-		TLS: network.TLSConfig{
-			Mode:        cfg.TLS.Mode,
-			CertPath:    cfg.TLS.CertPath,
-			KeyPath:     cfg.TLS.KeyPath,
-			CACertPaths: cfg.TLS.CACertPaths,
-		},
-	}
 }
