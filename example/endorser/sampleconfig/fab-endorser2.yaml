@@ -6,9 +6,6 @@
 # Channel for the network
 channel-id: mychannel
 
-# The namespace that this endorser tracks and can endorse for. 
-namespace: basic
-
 # Type of network (fabric or fabric-x)
 protocol: fabric
 

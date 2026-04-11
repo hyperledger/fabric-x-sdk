@@ -22,9 +22,6 @@ type Config struct {
 	// ChannelID is the channel to connect to.
 	ChannelID string `mapstructure:"channel-id"`
 
-	// Namespace is the namespace this endorser tracks and endorses for.
-	Namespace string `mapstructure:"namespace"`
-
 	// Server is the main gRPC server configuration with TLS, rate limiting, etc.
 	Server *connection.ServerConfig `mapstructure:"server"`
 
@@ -126,9 +123,6 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.ChannelID == "" {
 		errs = append(errs, errors.New("channel-id is required"))
-	}
-	if cfg.Namespace == "" {
-		errs = append(errs, errors.New("namespace is required"))
 	}
 	if p := cfg.Protocol; p != "" && p != "fabric" && p != "fabric-x" {
 		errs = append(errs, errors.New("protocol must be either fabric or fabric-x"))

@@ -16,8 +16,8 @@ import (
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-committer/utils/connection"
 	"github.com/hyperledger/fabric-x-common/common/viperutil"
-	"github.com/hyperledger/fabric-x-sdk/example/endorser/internal/config"
-	"github.com/hyperledger/fabric-x-sdk/example/endorser/internal/service"
+	"github.com/hyperledger/fabric-x-sdk/example/endorser/config"
+	"github.com/hyperledger/fabric-x-sdk/example/endorser/service"
 	"github.com/spf13/cobra"
 )
 
@@ -79,7 +79,17 @@ func run(cmd *cobra.Command, args []string) error {
 	logger.Infof("starting endorser", parser.ConfigFileUsed())
 
 	// Create service
-	svc, err := service.New(cfg)
+	executors := map[string]service.Executor{
+		"basic": SampleExecutor{},
+		"two":   SampleExecutor{},
+	}
+	svcCfg := service.ServiceConfig{
+		ChannelID: cfg.ChannelID,
+		Protocol:  cfg.Protocol,
+		Committer: cfg.Committer.ToPeerConf(),
+		DBConnStr: cfg.Database.ConnStr,
+	}
+	svc, err := service.New(svcCfg, cfg.Identity.MSPDir, cfg.Identity.MspID, executors, flogging.MustGetLogger("endorser"))
 	if err != nil {
 		return fmt.Errorf("failed to create service: %w", err)
 	}

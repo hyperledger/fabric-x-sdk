@@ -15,8 +15,9 @@ import (
 	"time"
 
 	sdk "github.com/hyperledger/fabric-x-sdk"
-	"github.com/hyperledger/fabric-x-sdk/example/endorser/internal/config"
-	"github.com/hyperledger/fabric-x-sdk/example/endorser/internal/service"
+	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	"github.com/hyperledger/fabric-x-sdk/example/endorser/config"
+	"github.com/hyperledger/fabric-x-sdk/example/endorser/service"
 	"github.com/hyperledger/fabric-x-sdk/fabrictest"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	"github.com/hyperledger/fabric-x-sdk/network"
@@ -70,7 +71,6 @@ func newWithTestBackend(t *testing.T, networkType string) *endorserSetup {
 
 	cfg := config.Config{
 		ChannelID: "mychannel",
-		Namespace: "basic",
 		Protocol:  networkType,
 		Database:  config.DatabaseConfig{ConnStr: fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())},
 		Committer: config.ClientConfig{
@@ -78,7 +78,7 @@ func newWithTestBackend(t *testing.T, networkType string) *endorserSetup {
 		},
 	}
 
-	return newSetup(t, cfg, testSigner{}, testSigner{}, fmt.Sprintf("127.0.0.1:%d", fnet.OrdererPort))
+	return newSetup(t, cfg, testSigner{}, testSigner{}, fmt.Sprintf("127.0.0.1:%d", fnet.OrdererPort), "basic")
 }
 
 // newTestCommitterSetup returns a test setup pointed at a running Fabric-X committer.
@@ -98,7 +98,6 @@ func newTestCommitterSetup(t *testing.T) *endorserSetup {
 
 	cfg := config.Config{
 		ChannelID: "mychannel",
-		Namespace: "basic",
 		Protocol:  "fabric-x",
 		Database:  config.DatabaseConfig{ConnStr: fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())},
 		Committer: config.ClientConfig{
@@ -128,7 +127,7 @@ func newTestCommitterSetup(t *testing.T) *endorserSetup {
 		t.Fatalf("SignerFromMSP (client): %v", err)
 	}
 
-	return newSetup(t, cfg, serviceSigner, clientSigner, ordererAddr)
+	return newSetup(t, cfg, serviceSigner, clientSigner, ordererAddr, "basic")
 }
 
 // newSetup creates a new endorserSetup.
@@ -136,11 +135,20 @@ func newTestCommitterSetup(t *testing.T) *endorserSetup {
 // clientSigner is used by the test client (signs proposals and the transaction envelope).
 // Using distinct signers reflects the real deployment where the endorser service and
 // the submitting client are different parties with different MSP identities.
-func newSetup(t *testing.T, cfg config.Config, serviceSigner, clientSigner sdk.Signer, ordererAddr string) *endorserSetup {
+func newSetup(t *testing.T, cfg config.Config, serviceSigner, clientSigner sdk.Signer, ordererAddr, namespace string) *endorserSetup {
 	t.Helper()
 
 	// Create service
-	svc, err := service.NewWithSigner(cfg, serviceSigner)
+	executors := map[string]service.Executor{
+		namespace: kvExecutor{},
+	}
+	svcCfg := service.ServiceConfig{
+		ChannelID: cfg.ChannelID,
+		Protocol:  cfg.Protocol,
+		Committer: cfg.Committer.ToPeerConf(),
+		DBConnStr: cfg.Database.ConnStr,
+	}
+	svc, err := service.NewWithSigner(svcCfg, serviceSigner, executors, sdk.NewTestLogger(t, "endorser"))
 	if err != nil {
 		t.Fatalf("NewWithSigner: %v", err)
 	}
@@ -166,7 +174,7 @@ func newSetup(t *testing.T, cfg config.Config, serviceSigner, clientSigner sdk.S
 			Address: lis.Addr().String(),
 			TLS:     network.TLSConfig{Mode: network.TLSModeNone},
 		}},
-		clientSigner, cfg.ChannelID, cfg.Namespace, "1.0",
+		clientSigner, cfg.ChannelID, namespace, "1.0",
 	)
 	if err != nil {
 		t.Fatalf("NewEndorsementClient: %v", err)
@@ -179,7 +187,7 @@ func newSetup(t *testing.T, cfg config.Config, serviceSigner, clientSigner sdk.S
 	// Use the same TLS config for orderer as for committer
 	orderers := []network.OrdererConf{{
 		Address: ordererAddr,
-		TLS:     service.ToPeerConf(cfg.Committer).TLS,
+		TLS:     cfg.Committer.ToPeerConf().TLS,
 	}}
 
 	var submitter *network.FabricSubmitter
@@ -199,7 +207,7 @@ func newSetup(t *testing.T, cfg config.Config, serviceSigner, clientSigner sdk.S
 	return &endorserSetup{
 		svc:          svc,
 		ec:           ec,
-		namespace:    cfg.Namespace,
+		namespace:    namespace,
 		endorserAddr: lis.Addr().String(),
 		submitter:    submitter,
 		networkType:  cfg.Protocol,
@@ -231,6 +239,34 @@ func (s *endorserSetup) waitForBlock(t *testing.T, minBlock uint64, timeout time
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for block %d", minBlock)
+}
+
+// --- test executor ---
+
+// kvExecutor is a minimal Executor for testing the service wiring.
+// Args: [key, value] to write, [key] to read. Anything else returns BadRequest.
+type kvExecutor struct{}
+
+func (kvExecutor) Execute(_ context.Context, newStore service.StoreFactory, inv endorsement.Invocation) (endorsement.ExecutionResult, error) {
+	store, err := newStore(0)
+	if err != nil {
+		return endorsement.ExecutionResult{}, fmt.Errorf("simulation store: %w", err)
+	}
+	switch len(inv.Args) {
+	case 1: // read
+		val, err := store.GetState(string(inv.Args[0]))
+		if err != nil {
+			return endorsement.ExecutionResult{}, fmt.Errorf("get: %w", err)
+		}
+		return endorsement.Success(store.Result(), nil, val), nil
+	case 2: // write
+		if err := store.PutState(string(inv.Args[0]), inv.Args[1]); err != nil {
+			return endorsement.ExecutionResult{}, fmt.Errorf("put: %w", err)
+		}
+		return endorsement.Success(store.Result(), nil, inv.Args[1]), nil
+	default:
+		return endorsement.BadRequest("usage: [key] or [key] [value]"), nil
+	}
 }
 
 // --- test signer ---
@@ -270,17 +306,15 @@ func runAll(t *testing.T, s *endorserSetup) {
 
 // --- individual test cases ---
 
-// testEndorserSetAndGet writes a key via set and reads it back via get.
+// testEndorserSetAndGet writes a key and reads it back.
 func testEndorserSetAndGet(t *testing.T, s *endorserSetup) {
 	key := t.Name() + "/" + rand.Text()
 
-	// Get current block number before submitting
 	currentBlock, _ := s.svc.BlockNumber(t.Context())
-	s.proposeAndSubmit(t, [][]byte{[]byte("set"), []byte(key), []byte("hello")})
+	s.proposeAndSubmit(t, [][]byte{[]byte(key), []byte("hello")})
 	s.waitForBlock(t, currentBlock+1, 5*time.Second)
 
-	// time.Sleep(500 * time.Millisecond)
-	end, err := s.ec.ExecuteTransaction(t.Context(), s.namespace, "1.0", [][]byte{[]byte("get"), []byte(key)})
+	end, err := s.ec.ExecuteTransaction(t.Context(), s.namespace, "1.0", [][]byte{[]byte(key)})
 	if err != nil {
 		t.Fatalf("ExecuteTransaction get: %v", err)
 	}
@@ -296,7 +330,7 @@ func testEndorserSetAndGet(t *testing.T, s *endorserSetup) {
 func testEndorserGetMissingKey(t *testing.T, s *endorserSetup) {
 	key := t.Name() + "/nonexistent"
 
-	end, err := s.ec.ExecuteTransaction(t.Context(), s.namespace, "1.0", [][]byte{[]byte("get"), []byte(key)})
+	end, err := s.ec.ExecuteTransaction(t.Context(), s.namespace, "1.0", [][]byte{[]byte(key)})
 	if err != nil {
 		t.Fatalf("ExecuteTransaction: %v", err)
 	}
@@ -312,9 +346,9 @@ func testEndorserGetMissingKey(t *testing.T, s *endorserSetup) {
 	}
 }
 
-// testEndorserBadRequest confirms that an unknown command returns a 400 status in the response.
+// testEndorserBadRequest confirms that too many args returns a 400 status in the response.
 func testEndorserBadRequest(t *testing.T, s *endorserSetup) {
-	end, err := s.ec.ExecuteTransaction(t.Context(), s.namespace, "1.0", [][]byte{[]byte("foobar")})
+	end, err := s.ec.ExecuteTransaction(t.Context(), s.namespace, "1.0", [][]byte{[]byte("a"), []byte("b"), []byte("c")})
 	if err != nil {
 		t.Fatalf("ExecuteTransaction: %v", err)
 	}
@@ -353,12 +387,12 @@ func testEndorserSetThenOverwrite(t *testing.T, s *endorserSetup) {
 	key := t.Name() + "/" + rand.Text()
 
 	currentBlock, _ := s.svc.BlockNumber(t.Context())
-	s.proposeAndSubmit(t, [][]byte{[]byte("set"), []byte(key), []byte("first")})
+	s.proposeAndSubmit(t, [][]byte{[]byte(key), []byte("first")})
 	s.waitForBlock(t, currentBlock+1, 5*time.Second)
-	s.proposeAndSubmit(t, [][]byte{[]byte("set"), []byte(key), []byte("second")})
+	s.proposeAndSubmit(t, [][]byte{[]byte(key), []byte("second")})
 	s.waitForBlock(t, currentBlock+2, 5*time.Second)
 
-	end, err := s.ec.ExecuteTransaction(t.Context(), s.namespace, "1.0", [][]byte{[]byte("get"), []byte(key)})
+	end, err := s.ec.ExecuteTransaction(t.Context(), s.namespace, "1.0", [][]byte{[]byte(key)})
 	if err != nil {
 		t.Fatalf("ExecuteTransaction get: %v", err)
 	}
@@ -382,16 +416,15 @@ func TestWaitForReadyWaitsForSync(t *testing.T) {
 	}
 	t.Cleanup(fnet.Stop)
 
-	cfg := config.Config{
+	svcCfg := service.ServiceConfig{
 		ChannelID: "mychannel",
-		Namespace: "basic",
 		Protocol:  "fabric-x",
-		Database:  config.DatabaseConfig{ConnStr: fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())},
-		Committer: config.ClientConfig{
-			Endpoint: &config.Endpoint{Host: "127.0.0.1", Port: int(fnet.PeerPort)},
-		},
+		DBConnStr: fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name()),
+		Committer: network.PeerConf{Address: fmt.Sprintf("127.0.0.1:%d", fnet.PeerPort)},
 	}
-	svc, err := service.NewWithSigner(cfg, testSigner{})
+	svc, err := service.NewWithSigner(svcCfg, testSigner{}, map[string]service.Executor{
+		"basic": kvExecutor{},
+	}, sdk.NewTestLogger(t, "endorser"))
 	if err != nil {
 		t.Fatalf("NewWithSigner: %v", err)
 	}

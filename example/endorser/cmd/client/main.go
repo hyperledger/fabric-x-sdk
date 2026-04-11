@@ -16,7 +16,7 @@ import (
 
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-x-common/common/viperutil"
-	"github.com/hyperledger/fabric-x-sdk/example/endorser/internal/config"
+	"github.com/hyperledger/fabric-x-sdk/example/endorser/config"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
@@ -69,7 +69,8 @@ submits the results to an orderer.
   invoke — endorse and submit to the orderer (write)`,
 	}
 	cmd.PersistentFlags().StringP("config", "c", "", "Path to configuration file")
-	cmd.MarkFlagRequired("config")
+	cmd.PersistentFlags().String("namespace", "", "Namespace to invoke (overrides config)")
+	cmd.MarkPersistentFlagRequired("config")
 
 	cmd.AddCommand(newQueryCmd(), newInvokeCmd())
 
@@ -80,7 +81,7 @@ submits the results to an orderer.
 }
 
 func newQueryCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   `query '{"Args":[]}'`,
 		Short: "Send a read-only proposal and print the response payload",
 		Args:  cobra.ExactArgs(1),
@@ -89,19 +90,20 @@ func newQueryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			ns := namespaceOrDefault(cmd, cfg.Namespace)
 
 			signer, err := identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
 			if err != nil {
 				return fmt.Errorf("load identity: %w", err)
 			}
 
-			ec, err := buildEndorsementClient(cfg, signer)
+			ec, err := buildEndorsementClient(cfg, signer, ns)
 			if err != nil {
 				return err
 			}
 			defer ec.Close() //nolint:errcheck
 
-			end, err := ec.ExecuteTransaction(cmd.Context(), cfg.Namespace, "1.0", txArgs)
+			end, err := ec.ExecuteTransaction(cmd.Context(), ns, "1.0", txArgs)
 			if err != nil {
 				return fmt.Errorf("endorsement failed: %w", err)
 			}
@@ -116,10 +118,11 @@ func newQueryCmd() *cobra.Command {
 			return nil
 		},
 	}
+	return cmd
 }
 
 func newInvokeCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   `invoke '{"function":"...","Args":[]}'`,
 		Short: "Endorse a transaction and submit it to the orderer",
 		Long: `Endorse a transaction and submit it to the orderer.
@@ -134,6 +137,7 @@ need to confirm that the transaction has been committed.`,
 			if cfg.Orderer == nil {
 				return fmt.Errorf("orderer is required for invoke")
 			}
+			ns := namespaceOrDefault(cmd, cfg.Namespace)
 
 			signer, err := identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
 			if err != nil {
@@ -142,7 +146,7 @@ need to confirm that the transaction has been committed.`,
 
 			logger := flogging.MustGetLogger("client")
 
-			ec, err := buildEndorsementClient(cfg, signer)
+			ec, err := buildEndorsementClient(cfg, signer, ns)
 			if err != nil {
 				return err
 			}
@@ -164,7 +168,7 @@ need to confirm that the transaction has been committed.`,
 			defer submitter.Close() //nolint:errcheck
 
 			logger.Debugf("sending proposal to %d endorser(s)", len(cfg.Endorsers))
-			end, err := ec.ExecuteTransaction(cmd.Context(), cfg.Namespace, "1.0", txArgs)
+			end, err := ec.ExecuteTransaction(cmd.Context(), ns, "1.0", txArgs)
 			if err != nil {
 				return fmt.Errorf("endorsement failed: %w", err)
 			}
@@ -185,6 +189,7 @@ need to confirm that the transaction has been committed.`,
 			return nil
 		},
 	}
+	return cmd
 }
 
 // prepare loads config and parses the transaction JSON — shared by query and invoke.
@@ -201,22 +206,16 @@ func prepare(cmd *cobra.Command, txJSON string) (Config, [][]byte, error) {
 }
 
 func loadConfig(cmd *cobra.Command) (Config, error) {
+	configFile, _ := cmd.Flags().GetString("config")
+	f, err := os.Open(configFile)
+	if err != nil {
+		return Config{}, fmt.Errorf("open config: %w", err)
+	}
+	defer f.Close()
+
 	parser := viperutil.New()
-	if configFile, _ := cmd.Flags().GetString("config"); configFile != "" {
-		f, err := os.Open(configFile)
-		if err != nil {
-			return Config{}, fmt.Errorf("open config: %w", err)
-		}
-		defer f.Close()
-		if err := parser.ReadConfig(f); err != nil {
-			return Config{}, fmt.Errorf("read config: %w", err)
-		}
-	} else {
-		parser.SetConfigName("client")
-		parser.AddConfigPaths(".")
-		if err := parser.ReadInConfig(); err != nil {
-			return Config{}, fmt.Errorf("read config: %w", err)
-		}
+	if err := parser.ReadConfig(f); err != nil {
+		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
 	var cfg Config
@@ -260,14 +259,21 @@ func validate(cfg Config) error {
 	return nil
 }
 
-func buildEndorsementClient(cfg Config, signer identity.Signer) (*network.EndorsementClient, error) {
+func buildEndorsementClient(cfg Config, signer identity.Signer, namespace string) (*network.EndorsementClient, error) {
 	peerConfs := make([]network.PeerConf, len(cfg.Endorsers))
 	for i := range cfg.Endorsers {
 		peerConfs[i] = cfg.Endorsers[i].ToPeerConf()
 	}
-	ec, err := network.NewEndorsementClient(peerConfs, signer, cfg.ChannelID, cfg.Namespace, "1.0")
+	ec, err := network.NewEndorsementClient(peerConfs, signer, cfg.ChannelID, namespace, "1.0")
 	if err != nil {
 		return nil, fmt.Errorf("create endorsement client: %w", err)
 	}
 	return ec, nil
+}
+
+func namespaceOrDefault(cmd *cobra.Command, cfgNamespace string) string {
+	if ns, _ := cmd.Flags().GetString("namespace"); ns != "" {
+		return ns
+	}
+	return cfgNamespace
 }

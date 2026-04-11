@@ -11,14 +11,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hyperledger/fabric-lib-go/common/flogging"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-committer/utils/connection"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
-	"github.com/hyperledger/fabric-x-sdk/example/endorser/internal/config"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	"github.com/hyperledger/fabric-x-sdk/network"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
@@ -35,81 +34,102 @@ import (
 // Service implements the Endorser gRPC API
 type Service struct {
 	peer.EndorserServer
-	healthcheck  *health.Server
-	channel      string
-	namespace    string
-	synchronizer *network.Synchronizer
-	executor     Executor
-	builder      endorsement.Builder
-	writeDB      *state.VersionedDB
-	readDB       *state.VersionedDB
-	logger       sdk.Logger
+	healthcheck       *health.Server
+	channel           string
+	synchronizer      *network.Synchronizer
+	executors         map[string]Executor
+	builder           endorsement.Builder
+	writeDB           *state.VersionedDB
+	readDB            *state.VersionedDB
+	monotonicVersions bool
+	logger            sdk.Logger
 }
 
 type Executor interface {
-	// Execute takes a chaincode-style invocation and returns a read/write set, status, payload and optional event.
-	Execute(context.Context, endorsement.Invocation) (endorsement.ExecutionResult, error)
+	// Execute takes a chaincode-style invocation and a StoreFactory, and returns a read/write set, status, payload and optional event.
+	Execute(context.Context, StoreFactory, endorsement.Invocation) (endorsement.ExecutionResult, error)
 }
 
-// New creates a new Service instance, loading the Fabric MSP identity from cfg.Identity.
-func New(cfg config.Config) (*Service, error) {
-	signer, err := identity.SignerFromMSP(cfg.Identity.MSPDir, cfg.Identity.MspID)
+// StateStore reads from the world state and captures reads and writes.
+// At the end of execution, call Result() to get the read/write set for this transaction.
+type StateStore interface {
+	GetState(key string) ([]byte, error)
+	PutState(key string, value []byte) error
+	DelState(key string) error
+	AddLog(address []byte, topics [][]byte, data []byte)
+	Result() blocks.ReadWriteSet
+}
+
+// StoreFactory creates a SimulationStore at the given block height.
+// Pass 0 for current state.
+type StoreFactory func(blockNum uint64) (StateStore, error)
+
+// ServiceConfig is the minimal configuration needed to construct a Service.
+// It contains only what the service itself uses — callers map their own
+// application config to this struct.
+type ServiceConfig struct {
+	ChannelID string
+	Protocol  string // "fabric" or "fabric-x" (default)
+	Committer network.PeerConf
+	DBConnStr string
+}
+
+// New creates a new Service instance, loading the Fabric MSP identity from mspDir and mspID.
+func New(cfg ServiceConfig, mspDir, mspID string, executors map[string]Executor, logger sdk.Logger) (*Service, error) {
+	signer, err := identity.SignerFromMSP(mspDir, mspID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load signer: %w", err)
 	}
-	return NewWithSigner(cfg, signer)
+	return NewWithSigner(cfg, signer, executors, logger)
 }
 
 // NewWithSigner creates a new Service with an already-constructed signer,
 // bypassing MSP loading. Useful in tests or when the signer is provided externally.
-func NewWithSigner(cfg config.Config, signer sdk.Signer) (*Service, error) {
-	logger := flogging.MustGetLogger("endorser")
+func NewWithSigner(cfg ServiceConfig, signer sdk.Signer, executors map[string]Executor, logger sdk.Logger) (*Service, error) {
 
 	// initialize sqlite databases
-	writeDB, err := state.NewWriteDB(cfg.ChannelID, cfg.Database.ConnStr)
+	writeDB, err := state.NewWriteDB(cfg.ChannelID, cfg.DBConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("db: %w", err)
 	}
-	readDB, err := state.NewReadDB(cfg.ChannelID, cfg.Database.ConnStr)
+	readDB, err := state.NewReadDB(cfg.ChannelID, cfg.DBConnStr)
 	if err != nil {
 		return nil, fmt.Errorf("db: %w", err)
 	}
 
-	var executor SampleExecutor
 	var builder endorsement.Builder
 	var sync *network.Synchronizer
+	var monotonicVersions bool
 	switch cfg.Protocol {
 	case "fabric":
-		executor = SampleExecutor{db: readDB}
 		builder = efab.NewEndorsementBuilder(signer)
-		sync, err = nfab.NewSynchronizer(readDB, cfg.ChannelID, ToPeerConf(cfg.Committer), signer, logger, writeDB)
+		sync, err = nfab.NewSynchronizer(readDB, cfg.ChannelID, cfg.Committer, signer, logger, writeDB)
 	case "fabric-x", "":
-		executor = SampleExecutor{db: readDB, monotonicVersions: true}
+		monotonicVersions = true
 		builder = efabx.NewEndorsementBuilder(signer)
-		sync, err = nfabx.NewSynchronizer(readDB, cfg.ChannelID, ToPeerConf(cfg.Committer), signer, logger, writeDB)
+		sync, err = nfabx.NewSynchronizer(readDB, cfg.ChannelID, cfg.Committer, signer, logger, writeDB)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("create synchronizer: %w", err)
 	}
 
 	s := &Service{
-		healthcheck:  connection.DefaultHealthCheckService(),
-		channel:      cfg.ChannelID,
-		namespace:    cfg.Namespace,
-		synchronizer: sync,
-		executor:     executor,
-		builder:      builder,
-		readDB:       readDB,
-		writeDB:      writeDB,
-		logger:       logger,
+		healthcheck:       connection.DefaultHealthCheckService(),
+		channel:           cfg.ChannelID,
+		synchronizer:      sync,
+		executors:         executors,
+		builder:           builder,
+		readDB:            readDB,
+		writeDB:           writeDB,
+		monotonicVersions: monotonicVersions,
+		logger:            logger,
 	}
 
-	logger.Info("endorser initialized")
+	logger.Infof("endorser initialized")
 	return s, nil
 }
 
-// ReadDB returns the write-side database used to store committed blocks.
-// Exposed for integration tests.
+// BlockNumber is used for integration tests.
 func (s *Service) BlockNumber(ctx context.Context) (uint64, error) {
 	return s.readDB.BlockNumber(ctx)
 }
@@ -124,7 +144,9 @@ func (s *Service) RegisterService(server *grpc.Server) {
 }
 
 // Run implements connection.Service interface
-// This runs background tasks concurrently with the gRPC server
+// This runs background tasks concurrently with the gRPC server.
+// In this case, the synchronizer which makes sure our world state
+// database is up to date with the committing peer we connect to.
 func (s *Service) Run(ctx context.Context) error {
 	go s.synchronizer.Start(ctx)
 	s.logger.Infof("synchronization started")
@@ -153,10 +175,11 @@ func (s *Service) ProcessProposal(ctx context.Context, prop *peer.SignedProposal
 		s.logger.Infof("tx=%s err=wrong channel: %s", inv.TxID, inv.Channel)
 		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("channel must be %s", s.channel))
 	}
-	// We enforce a single namespace.
-	if inv.CCID.Name != s.namespace {
-		s.logger.Infof("tx=%s err=wrong namespace: %s", inv.TxID, inv.CCID.Name)
-		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("namespace must be %s", s.namespace))
+	// Look up the executor for this namespace.
+	executor, ok := s.executors[inv.CCID.Name]
+	if !ok {
+		s.logger.Infof("tx=%s err=unknown namespace: %s", inv.TxID, inv.CCID.Name)
+		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("unknown namespace: %s", inv.CCID.Name))
 	}
 	// the `peer chaincode invoke` command leaves the version empty, causing an INVALID_CHAINCODE at commit time.
 	// since we don't really use the version anyway, we just default to 1.0.
@@ -164,13 +187,18 @@ func (s *Service) ProcessProposal(ctx context.Context, prop *peer.SignedProposal
 		inv.CCID.Version = "1.0"
 	}
 
+	// build a factory that closes over the per-request context and namespace
+	newStore := func(blockNum uint64) (StateStore, error) {
+		return state.NewSimulationStore(ctx, s.readDB, inv.CCID.Name, blockNum, s.monotonicVersions)
+	}
+
 	// execute the transaction
-	res, err := s.executor.Execute(ctx, inv)
+	res, err := executor.Execute(ctx, newStore, inv)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	// sign and respond
+	// create the response
 	end, err := s.builder.Endorse(inv, res)
 	if err != nil {
 		return nil, status.Error(codes.Internal, fmt.Sprintf("endorsement: %s", err.Error()))
@@ -200,19 +228,5 @@ func (s *Service) WaitForReady(ctx context.Context) bool {
 			return false
 		case <-time.After(100 * time.Millisecond):
 		}
-	}
-}
-
-// ToPeerConf converts a ClientConfig to SDK's PeerConf.
-// This conversion layer keeps the config package independent from SDK internals.
-func ToPeerConf(cfg config.ClientConfig) network.PeerConf {
-	return network.PeerConf{
-		Address: cfg.Endpoint.Address(),
-		TLS: network.TLSConfig{
-			Mode:        cfg.TLS.Mode,
-			CertPath:    cfg.TLS.CertPath,
-			KeyPath:     cfg.TLS.KeyPath,
-			CACertPaths: cfg.TLS.CACertPaths,
-		},
 	}
 }

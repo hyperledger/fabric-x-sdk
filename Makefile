@@ -38,7 +38,8 @@ start-x:
 		-e SC_ORDERER_BLOCK_SIZE=1 \
 		docker.io/hyperledger/fabric-x-committer-test-node:0.1.9 run db orderer committer
 	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
-	@go tool fxconfig namespace create basic --policy="OR('Org1MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
+	@go tool fxconfig namespace create basic --policy="OR('Org1MSP.member', 'Org2MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
+	@go tool fxconfig namespace create two --policy="AND('Org1MSP.member', 'Org2MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
 
 .PHONY: test-x
 test-x:
