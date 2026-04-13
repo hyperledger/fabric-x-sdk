@@ -1,1 +1,3 @@
 testdata/crypto
+testdata/fablo/fablo-target/
+testdata/fablo/*.tar.gz

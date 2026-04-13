@@ -334,11 +334,15 @@ func testAddLog(t *testing.T, s *testSetup) {
 	if err != nil {
 		t.Fatalf("endorsement.Parse: %v", err)
 	}
-	resp, err := s.builder.Endorse(inv, endorsement.Success(sim.Result(), eventBytes, nil))
-	if err != nil {
-		t.Fatalf("Endorse: %v", err)
+	var responses []*peer.ProposalResponse
+	for _, b := range s.builders {
+		resp, err := b.Endorse(inv, endorsement.Success(sim.Result(), eventBytes, nil))
+		if err != nil {
+			t.Fatalf("Endorse: %v", err)
+		}
+		responses = append(responses, resp)
 	}
-	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: []*peer.ProposalResponse{resp}}
+	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: responses}
 	if err := s.submitter.Submit(ctx, end); err != nil {
 		t.Fatalf("submitEndorsement: %v", err)
 	}
@@ -349,7 +353,6 @@ func testEndorsementClientExecuteTransaction(t *testing.T, s *testSetup) {
 	key := t.Name() + "/" + rand.Text()
 
 	endr := &localEndorser{
-		builder: s.builder,
 		result: func(_ endorsement.Invocation) endorsement.ExecutionResult {
 			return endorsement.Success(blocks.ReadWriteSet{
 				Writes: []blocks.KVWrite{{Key: key, Value: []byte("v_ec")}},
@@ -366,15 +369,14 @@ func testEndorsementClientExecuteTransaction(t *testing.T, s *testSetup) {
 
 func testBadRequestEndorsement(t *testing.T, s *testSetup) {
 	endr := &localEndorser{
-		builder: s.builder,
 		result: func(_ endorsement.Invocation) endorsement.ExecutionResult {
 			return endorsement.BadRequest("unauthorized")
 		},
 	}
 
 	end := s.endorse(t, endr, [][]byte{[]byte("invoke")})
-	if len(end.Responses) != 1 {
-		t.Fatalf("expected 1 response, got %d", len(end.Responses))
+	if len(end.Responses) == 0 {
+		t.Fatal("expected at least one response")
 	}
 	resp := end.Responses[0]
 	if resp.Response == nil {

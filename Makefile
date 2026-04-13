@@ -48,3 +48,27 @@ test-x:
 .PHONY: stop-x
 stop-x:
 	@docker rm -f fabric-x-committer-test-node
+
+.PHONY: init-fablo
+init-fablo:
+	cd testdata/fablo && ./fablo up
+	cd testdata/fablo && ./fablo snapshot snapshot
+
+.PHONY: start-fablo
+start-fablo:
+	cd testdata/fablo && ./fablo prune || true
+	cd testdata/fablo && ./fablo restore snapshot
+	cd testdata/fablo && ./fablo start
+
+.PHONY: stop-fablo
+stop-fablo:
+	cd testdata/fablo && ./fablo stop
+
+.PHONY: test-fablo
+test-fablo:
+	@go test -timeout 60s -run ^TestFablo$$ ./integration
+
+.PHONY: clean-fablo
+clean-fablo:
+	cd testdata/fablo && ./fablo prune || true
+	rm -rf testdata/fablo/snapshot.fablo.tar.gz

@@ -27,6 +27,10 @@ type TLSConfig struct {
 
 	// CACertPaths: Paths to CA certificate files to verify the remote server.
 	CACertPaths []string
+
+	// ServerName overrides the server name used for TLS SNI and certificate
+	// verification. When empty, the host portion of the address is used.
+	ServerName string
 }
 
 const (
@@ -80,6 +84,10 @@ func (c TLSConfig) Validate() error {
 func (c TLSConfig) LoadClientTLSConfig(serverName string) (*tls.Config, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
+	}
+
+	if c.ServerName != "" {
+		serverName = c.ServerName
 	}
 
 	switch c.Mode {

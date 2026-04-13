@@ -44,6 +44,15 @@ func TestFabric(t *testing.T) {
 	runAll(t, newWithTestBackend(t, "fabric"))
 }
 
+// TestFablo runs the full test corpus against a real two-org Fabric network
+// started with fablo. It is skipped automatically in short mode.
+func TestFablo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping fablo tests in short mode")
+	}
+	runAll(t, newFabloSetup(t))
+}
+
 func TestFabricX(t *testing.T) {
 	runAll(t, newWithTestBackend(t, "fabric-x"))
 }
@@ -110,7 +119,7 @@ type testSetup struct {
 	localDB           *state.VersionedDB
 	monotonicVersions bool
 	signer            sdk.Signer
-	builder           endorsement.Builder
+	builders          []endorsement.Builder
 	submitter         *network.FabricSubmitter
 	capture           *captureHandler
 }
@@ -153,6 +162,59 @@ func newWithTestBackend(t *testing.T, networkType string, batching ...fabrictest
 	}
 
 	return newSetup(t, networkType, cfg)
+}
+
+// newFabloSetup returns a testSetup pointed at a running two-org Fablo network.
+func newFabloSetup(t *testing.T) *testSetup {
+	t.Helper()
+	cryptoBase := path.Join("..", "testdata", "fablo", "fablo-target", "fabric-config",
+		"crypto-config", "peerOrganizations")
+	peer0 := path.Join(cryptoBase, "org1.example.com", "peers", "peer0.org1.example.com")
+	orderer0 := path.Join(cryptoBase, "orderer.example.com", "peers", "orderer0.group1.orderer.example.com")
+	user := path.Join(cryptoBase, "org1.example.com", "users", "User1@org1.example.com")
+
+	cfg := config{
+		NetworkType: "fabric",
+		Channel:     "mychannel",
+		Namespace:   "basic",
+		Orderers: []network.OrdererConf{{
+			Address: "127.0.0.1:7030",
+			TLS: network.TLSConfig{
+				Mode:        network.TLSModeTLS,
+				ServerName:  "orderer0.group1.orderer.example.com",
+				CACertPaths: []string{path.Join(orderer0, "tls", "ca.crt")},
+			},
+		}},
+		Peer: network.PeerConf{
+			Address: "127.0.0.1:7041",
+			TLS: network.TLSConfig{
+				Mode:        network.TLSModeTLS,
+				ServerName:  "peer0.org1.example.com",
+				CACertPaths: []string{path.Join(peer0, "tls", "ca.crt")},
+			},
+		},
+		SignerMSPDir: path.Join(user, "msp"),
+		SignerMSPID:  "Org1MSP",
+	}
+
+	conn, err := net.DialTimeout("tcp", cfg.Peer.Address, time.Second)
+	if err != nil {
+		t.Fatalf("fablo network not running (start with make start-fablo)")
+	}
+	conn.Close()
+
+	s := newSetup(t, "fabric", cfg)
+
+	// The fablo network enforces AND('Org1MSP.member', 'Org2MSP.member'), so
+	// we need an endorser for each org.
+	org2User := path.Join(cryptoBase, "org2.example.com", "users", "User1@org2.example.com")
+	org2Signer, err := identity.SignerFromMSP(path.Join(org2User, "msp"), "Org2MSP")
+	if err != nil {
+		t.Fatalf("SignerFromMSP org2: %v", err)
+	}
+	s.builders = append(s.builders, efab.NewEndorsementBuilder(org2Signer))
+
+	return s
 }
 
 // newTestCommitterSetup returns a testSetup pointed at a running Fabric-X test committer.
@@ -256,7 +318,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		monotonicVersions: monotonicVersions,
 		networkType:       networkType,
 		signer:            signer,
-		builder:           builder,
+		builders:          []endorsement.Builder{builder},
 		submitter:         submitter,
 		capture:           capture,
 	}
@@ -288,30 +350,45 @@ func (s *testSetup) endorseAndSubmit(ctx context.Context, rws blocks.ReadWriteSe
 	if err != nil {
 		return fmt.Errorf("endorsement.Parse: %w", err)
 	}
-	resp, err := s.builder.Endorse(inv, endorsement.Success(rws, nil, nil))
-	if err != nil {
-		return fmt.Errorf("Endorse: %w", err)
+	result := endorsement.Success(rws, nil, nil)
+	var responses []*peer.ProposalResponse
+	for _, b := range s.builders {
+		resp, err := b.Endorse(inv, result)
+		if err != nil {
+			return fmt.Errorf("Endorse: %w", err)
+		}
+		responses = append(responses, resp)
 	}
-	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: []*peer.ProposalResponse{resp}}
+	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: responses}
 	return s.submitter.Submit(ctx, end)
 }
 
-// endorse builds a proposal, sends it to endr, and returns the resulting sdk.Endorsement.
+// endorse builds a proposal, applies endr's result function with every builder,
+// and returns the combined sdk.Endorsement (one response per builder).
 func (s *testSetup) endorse(t *testing.T, endr *localEndorser, args [][]byte) sdk.Endorsement {
 	t.Helper()
 	prop, err := network.NewSignedProposal(s.signer, s.channel, s.namespace, "1.0", args)
 	if err != nil {
 		t.Fatalf("NewSignedProposal: %v", err)
 	}
-	resp, err := endr.ProcessProposal(t.Context(), prop)
+	inv, err := endorsement.Parse(prop, time.Time{})
 	if err != nil {
-		t.Fatalf("ProcessProposal: %v", err)
+		t.Fatalf("endorsement.Parse: %v", err)
+	}
+	result := endr.result(inv)
+	var responses []*peer.ProposalResponse
+	for _, b := range s.builders {
+		resp, err := b.Endorse(inv, result)
+		if err != nil {
+			t.Fatalf("Endorse: %v", err)
+		}
+		responses = append(responses, resp)
 	}
 	proposal, err := protoutil.UnmarshalProposal(prop.ProposalBytes)
 	if err != nil {
 		t.Fatalf("UnmarshalProposal: %v", err)
 	}
-	return sdk.Endorsement{Proposal: proposal, Responses: []*peer.ProposalResponse{resp}}
+	return sdk.Endorsement{Proposal: proposal, Responses: responses}
 }
 
 // waitForKeyValue polls until the key has the given value in the local DB.
@@ -391,18 +468,9 @@ func (testSigner) Serialize() ([]byte, error)    { return []byte("identity"), ni
 
 // --- local endorser ---
 
-// localEndorser endorses proposals in-process without a gRPC hop.
-// result is called with the parsed invocation and its return value is used as
-// the execution result, allowing tests to inject success or error outcomes.
+// localEndorser holds a result function that is applied to every builder in
+// testSetup.builders. It lets tests inject success or error outcomes without a
+// gRPC hop.
 type localEndorser struct {
-	builder endorsement.Builder
-	result  func(inv endorsement.Invocation) endorsement.ExecutionResult
-}
-
-func (e *localEndorser) ProcessProposal(_ context.Context, prop *peer.SignedProposal) (*peer.ProposalResponse, error) {
-	inv, err := endorsement.Parse(prop, time.Time{})
-	if err != nil {
-		return nil, err
-	}
-	return e.builder.Endorse(inv, e.result(inv))
+	result func(inv endorsement.Invocation) endorsement.ExecutionResult
 }

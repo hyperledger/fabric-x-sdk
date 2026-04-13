@@ -33,6 +33,10 @@ type Signer struct {
 func SignerFromMSP(dir, mspID string) (Signer, error) {
 	keyFiles, err := filepath.Glob(filepath.Join(dir, "keystore", "*_sk"))
 	if err != nil || len(keyFiles) == 0 {
+		// fabric-ca names the key priv-key.pem instead of *_sk
+		keyFiles, err = filepath.Glob(filepath.Join(dir, "keystore", "*.pem"))
+	}
+	if err != nil || len(keyFiles) == 0 {
 		return Signer{}, fmt.Errorf("no private key found in path %s: %w", filepath.Join(dir, "keystore"), err)
 	}
 	privBytes, err := os.ReadFile(keyFiles[0])
