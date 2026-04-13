@@ -175,7 +175,7 @@ peer chaincode query \
 
 ### Configuration Files
 
-See the `config` folder.
+See the `sampleconfig` folder.
 
 ### TLS Modes
 
@@ -199,10 +199,9 @@ export ENDORSER_SERVER_ENDPOINT_PORT=8080 go run cmd/endorser/main.go -c samplec
 ├── cmd/
 │   ├── endorser/        # Endorser service entry point
 │   └── client/          # Developer client CLI entry point
-├── internal/
-│   ├── sampleconfig/          # Service configuration structures
-│   └── service/         # Service implementation and integration tests
-├── sampleconfig/              # Sample configuration files
+├── config/              # Service configuration structures
+├── sampleconfig/        # Service configuration files
+├── service/             # Service implementation and integration tests
 ├── go.mod
 └── README.md
 ```
@@ -216,6 +215,7 @@ This example uses the **fabric-x-sdk** for Fabric integration:
 - `fabric-x-sdk` - Reusable SDK for Fabric and Fabric-X applications
   - `blocks` - Block parsing and processing
   - `endorsement` - Fabric and Fabric-X endorsement building
+  - `fabrictest` - Integration testing with a test 'network'
   - `identity` - MSP identity and signing
   - `network` - Peer synchronization and block delivery
   - `state` - Versioned state database
