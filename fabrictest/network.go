@@ -12,7 +12,9 @@ package fabrictest
 
 import (
 	"errors"
+	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
@@ -30,8 +32,8 @@ import (
 // Network is a wrapper for a minimal mock Fabric.
 // Embed Network in a test and use PeerAddr and OrdererAddr as endpoints.
 type Network struct {
-	OrdererAddr string
-	PeerAddr    string
+	PeerPort    int
+	OrdererPort int
 	oSrv        *grpc.Server
 	pSrv        *grpc.Server
 	orderer     *testOrderer
@@ -46,7 +48,7 @@ type TxParser interface {
 }
 
 // Start creates grpc servers for the peer and orderer on random ports on localhost.
-func Start(namespace, networkType string, cfg BatchingConfig) (*Network, error) {
+func Start(namespace, networkType string, cfg Config) (*Network, error) {
 	logger := sdk.NewStdLogger("fabrictest")
 
 	// in memory world state db
@@ -71,19 +73,18 @@ func Start(namespace, networkType string, cfg BatchingConfig) (*Network, error) 
 	}
 
 	// listen on random local port
-	ordererLis, err := net.Listen("tcp", "127.0.0.1:0")
+	ordererLis, oPort, err := listen(cfg.OrdererPort)
 	if err != nil {
 		return nil, err
 	}
-
-	peerLis, err := net.Listen("tcp", "127.0.0.1:0")
+	peerLis, pPort, err := listen(cfg.OrdererPort)
 	if err != nil {
 		return nil, err
 	}
 
 	n := &Network{
-		OrdererAddr: ordererLis.Addr().String(),
-		PeerAddr:    peerLis.Addr().String(),
+		OrdererPort: oPort,
+		PeerPort:    pPort,
 		oSrv:        grpc.NewServer(),
 		pSrv:        grpc.NewServer(),
 	}
@@ -103,6 +104,16 @@ func Start(namespace, networkType string, cfg BatchingConfig) (*Network, error) 
 	go n.pSrv.Serve(peerLis)
 
 	return n, nil
+}
+
+func listen(port int) (net.Listener, int, error) {
+	lis, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return nil, 0, err
+	}
+	_, actualPort, err := net.SplitHostPort(lis.Addr().String())
+	p, err := strconv.Atoi(actualPort)
+	return lis, p, err
 }
 
 func (n *Network) Stop() {

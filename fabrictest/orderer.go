@@ -16,15 +16,19 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
 )
 
-// BatchingConfig controls batching behavior of the test orderer.
-// BlockCutTime is the maximum time to wait before cutting a block (0 = cut immediately).
-// MaxTxPerBlock is the maximum number of transactions per block (0 = no limit).
-type BatchingConfig struct {
-	BlockCutTime  time.Duration
+// Config controls the network characteristics and batching behavior of the test orderer.
+type Config struct {
+	// BlockCutTime is the maximum time to wait before cutting a block (0 = cut immediately).
+	BlockCutTime time.Duration
+	// MaxTxPerBlock is the maximum number of transactions per block (0 = no limit).
 	MaxTxPerBlock int
+	// OrdererPort is the port of the orderer (0 = random)
+	OrdererPort int
+	// PeerPort is the port of the peer (0 = random)
+	PeerPort int
 }
 
-func newTestOrderer(l *ledger, cfg BatchingConfig) *testOrderer {
+func newTestOrderer(l *ledger, cfg Config) *testOrderer {
 	o := &testOrderer{
 		ledger: l,
 		config: cfg,
@@ -42,7 +46,7 @@ func newTestOrderer(l *ledger, cfg BatchingConfig) *testOrderer {
 type testOrderer struct {
 	ledger *ledger
 	inCh   chan *common.Envelope
-	config BatchingConfig
+	config Config
 	stopCh chan struct{}
 }
 

@@ -62,7 +62,7 @@ func TestFabricXCommitter(t *testing.T) {
 func TestFabricTestTwoTransactions(t *testing.T) {
 	for _, nt := range []string{"fabric", "fabric-x"} {
 		t.Run(nt, func(t *testing.T) {
-			s := newWithTestBackend(t, nt, fabrictest.BatchingConfig{
+			s := newWithTestBackend(t, nt, fabrictest.Config{
 				BlockCutTime:  time.Second,
 				MaxTxPerBlock: 2,
 			})
@@ -95,9 +95,9 @@ type config struct {
 }
 
 // newWithTestBackend returns a test setup with an in-process fake fabric from the `fabrictest` package.
-func newWithTestBackend(t *testing.T, networkType string, batching ...fabrictest.BatchingConfig) *testSetup {
+func newWithTestBackend(t *testing.T, networkType string, batching ...fabrictest.Config) *testSetup {
 	t.Helper()
-	var batchCfg fabrictest.BatchingConfig
+	var batchCfg fabrictest.Config
 	if len(batching) > 0 {
 		batchCfg = batching[0]
 	}
@@ -112,11 +112,11 @@ func newWithTestBackend(t *testing.T, networkType string, batching ...fabrictest
 		Channel:     "mychannel",
 		Namespace:   "basic",
 		Peer: network.PeerConf{
-			Address: nw.PeerAddr,
+			Address: fmt.Sprintf("127.0.0.1:%d", nw.PeerPort),
 			TLS:     network.TLSConfig{Mode: network.TLSModeNone},
 		},
 		Orderers: []network.OrdererConf{{
-			Address: nw.OrdererAddr,
+			Address: fmt.Sprintf("127.0.0.1:%d", nw.OrdererPort),
 			TLS:     network.TLSConfig{Mode: network.TLSModeNone},
 		}},
 	}

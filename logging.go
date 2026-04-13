@@ -12,8 +12,7 @@ import (
 )
 
 // Logger is the logging interface used throughout the SDK.
-// This interface is compatible with github.com/hyperledger/fabric-x-committer/utils/logging.Logger
-// (and by extension, *zap.SugaredLogger), allowing direct injection without wrappers.
+// This interface is compatible with the fabric logger from fabric-lib-go.
 //
 // Users can provide any logger implementation that supports formatted logging at different levels.
 type Logger interface {
