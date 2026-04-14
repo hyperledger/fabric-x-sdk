@@ -11,6 +11,7 @@ import (
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"google.golang.org/protobuf/proto"
 )
@@ -35,6 +36,59 @@ func buildEnvelope(t *testing.T, txID string, tx *applicationpb.Tx) *common.Enve
 		t.Fatalf("marshal Payload: %v", err)
 	}
 	return &common.Envelope{Payload: payloadBytes}
+}
+
+func buildBlock(t *testing.T, blockNum uint64, envelopes []*common.Envelope, txFilter []byte) *common.Block {
+	t.Helper()
+	data := make([][]byte, len(envelopes))
+	for i, env := range envelopes {
+		var err error
+		data[i], err = proto.Marshal(env)
+		if err != nil {
+			t.Fatalf("marshal envelope %d: %v", i, err)
+		}
+	}
+	metadata := make([][]byte, int(common.BlockMetadataIndex_TRANSACTIONS_FILTER)+1)
+	metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txFilter
+	return &common.Block{
+		Header: &common.BlockHeader{Number: blockNum},
+		Data:   &common.BlockData{Data: data},
+		Metadata: &common.BlockMetadata{
+			Metadata: metadata,
+		},
+	}
+}
+
+func TestParse_TxNumber(t *testing.T) {
+	tx := &applicationpb.Tx{
+		Namespaces: []*applicationpb.TxNamespace{
+			{NsId: "ns", BlindWrites: []*applicationpb.Write{{Key: []byte("k"), Value: []byte("v")}}},
+		},
+	}
+	env0 := buildEnvelope(t, "tx0", tx)
+	env1 := buildEnvelope(t, "tx1", tx)
+	env2 := buildEnvelope(t, "tx2", tx)
+
+	txFilter := []byte{
+		byte(committerpb.Status_COMMITTED),
+		byte(committerpb.Status_ABORTED_MVCC_CONFLICT),
+		byte(committerpb.Status_COMMITTED),
+	}
+	b := buildBlock(t, 5, []*common.Envelope{env0, env1, env2}, txFilter)
+
+	p := NewBlockParser(sdk.NoOpLogger{})
+	block, err := p.Parse(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(block.Transactions) != 3 {
+		t.Fatalf("expected 3 transactions, got %d", len(block.Transactions))
+	}
+	for i, btx := range block.Transactions {
+		if btx.Number != int64(i) {
+			t.Errorf("tx[%d].Number = %d, want %d", i, btx.Number, i)
+		}
+	}
 }
 
 func TestParse_BlindWrite(t *testing.T) {

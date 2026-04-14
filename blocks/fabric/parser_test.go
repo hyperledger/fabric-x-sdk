@@ -64,6 +64,53 @@ func buildEnvelope(t *testing.T, txID, namespace string, kvs *kvrwset.KVRWSet) *
 	return &common.Envelope{Payload: payloadBytes}
 }
 
+func buildBlock(t *testing.T, blockNum uint64, envelopes []*common.Envelope, txFilter []byte) *common.Block {
+	t.Helper()
+	data := make([][]byte, len(envelopes))
+	for i, env := range envelopes {
+		data[i] = mustMarshal(t, env)
+	}
+	metadata := make([][]byte, int(common.BlockMetadataIndex_TRANSACTIONS_FILTER)+1)
+	metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txFilter
+	return &common.Block{
+		Header: &common.BlockHeader{Number: blockNum},
+		Data:   &common.BlockData{Data: data},
+		Metadata: &common.BlockMetadata{
+			Metadata: metadata,
+		},
+	}
+}
+
+func TestParse_TxNumber(t *testing.T) {
+	kvs := &kvrwset.KVRWSet{
+		Writes: []*kvrwset.KVWrite{{Key: "k", Value: []byte("v")}},
+	}
+	env0 := buildEnvelope(t, "tx0", "ns", kvs)
+	env1 := buildEnvelope(t, "tx1", "ns", kvs)
+	env2 := buildEnvelope(t, "tx2", "ns", kvs)
+
+	txFilter := []byte{
+		byte(peer.TxValidationCode_VALID),
+		byte(peer.TxValidationCode_MVCC_READ_CONFLICT),
+		byte(peer.TxValidationCode_VALID),
+	}
+	b := buildBlock(t, 5, []*common.Envelope{env0, env1, env2}, txFilter)
+
+	p := NewBlockParser(sdk.NoOpLogger{})
+	block, err := p.Parse(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(block.Transactions) != 3 {
+		t.Fatalf("expected 3 transactions, got %d", len(block.Transactions))
+	}
+	for i, tx := range block.Transactions {
+		if tx.Number != int64(i) {
+			t.Errorf("tx[%d].Number = %d, want %d", i, tx.Number, i)
+		}
+	}
+}
+
 func TestParse_BasicWrite(t *testing.T) {
 	kvs := &kvrwset.KVRWSet{
 		Writes: []*kvrwset.KVWrite{
