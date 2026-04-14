@@ -55,9 +55,9 @@ func (p BlockParser) Parse(b *common.Block) (blocks.Block, error) {
 			continue
 		}
 		if tx != nil {
-			// we also parse invalid transactions in case a handler needs their content.
-			tx.Number = int64(txNum)
+			// we also include invalid transactions in case a handler needs their content.
 			tx.Valid = isValid(txFilter, txNum)
+			tx.Number = int64(txNum)
 			block.Transactions = append(block.Transactions, *tx)
 		}
 	}
