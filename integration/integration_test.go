@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,6 +74,35 @@ func TestFabricTestTwoTransactions(t *testing.T) {
 
 // --- test setup ---
 
+// captureHandler records every parsed block so tests can inspect transactions.
+type captureHandler struct {
+	mu     sync.Mutex
+	blocks []blocks.Block
+}
+
+func (h *captureHandler) Handle(_ context.Context, b blocks.Block) error {
+	h.mu.Lock()
+	h.blocks = append(h.blocks, b)
+	h.mu.Unlock()
+	return nil
+}
+
+// findTx returns the captured transaction with the given ID, or nil if not found.
+// Call this only after finality is established (e.g. waitForKeyValue returned).
+func (h *captureHandler) findTx(txID string) *blocks.Transaction {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.blocks {
+		for j := range h.blocks[i].Transactions {
+			if h.blocks[i].Transactions[j].ID == txID {
+				tx := h.blocks[i].Transactions[j]
+				return &tx
+			}
+		}
+	}
+	return nil
+}
+
 type testSetup struct {
 	channel           string
 	namespace         string
@@ -82,6 +112,7 @@ type testSetup struct {
 	signer            sdk.Signer
 	builder           endorsement.Builder
 	submitter         *network.FabricSubmitter
+	capture           *captureHandler
 }
 
 type config struct {
@@ -188,20 +219,22 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	}
 	t.Cleanup(func() { localDB.Close() }) //nolint:errcheck
 
+	capture := &captureHandler{}
+
 	var builder endorsement.Builder
 	var submitter *network.FabricSubmitter
 	var sync *network.Synchronizer
 	switch networkType {
 	case "fabric":
 		builder = efab.NewEndorsementBuilder(signer)
-		sync, err = nfab.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB)
+		sync, err = nfab.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB, capture)
 		if err != nil {
 			t.Fatalf("NewSynchronizaer: %v", err)
 		}
 		submitter, err = nfab.NewSubmitter(cfg.Orderers, signer, 0, log)
 	case "fabric-x":
 		builder = efabx.NewEndorsementBuilder(signer)
-		sync, err = nfabx.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB)
+		sync, err = nfabx.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB, capture)
 		if err != nil {
 			t.Fatalf("NewSynchronizaer: %v", err)
 		}
@@ -225,6 +258,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		signer:            signer,
 		builder:           builder,
 		submitter:         submitter,
+		capture:           capture,
 	}
 }
 

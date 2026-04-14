@@ -17,6 +17,7 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/network"
+	"google.golang.org/protobuf/proto"
 )
 
 // testCase is a backend-agnostic test function. The testSetup is shared across
@@ -39,6 +40,7 @@ var cases = []testCase{
 	{"AddLog", testAddLog},
 	{"EndorsementClientExecute", testEndorsementClientExecuteTransaction},
 	{"BadRequestEndorsement", testBadRequestEndorsement},
+	{"InputArgsAndEvents", testInputArgsAndEvents},
 }
 
 // runAll executes every case as a subtest against s.
@@ -380,6 +382,62 @@ func testBadRequestEndorsement(t *testing.T, s *testSetup) {
 	}
 	if resp.Response.Status != 400 {
 		t.Errorf("got status %d, want 400", resp.Response.Status)
+	}
+}
+
+func testInputArgsAndEvents(t *testing.T, s *testSetup) {
+	ctx := t.Context()
+	key := t.Name() + "/" + rand.Text()
+	args := [][]byte{[]byte("invoke"), []byte("arg1"), []byte("arg2")}
+	eventPayload := []byte(`{"type":"Transfer"}`)
+
+	signedProp, err := network.NewSignedProposal(s.signer, s.channel, s.namespace, "1.0", args)
+	if err != nil {
+		t.Fatalf("NewSignedProposal: %v", err)
+	}
+	inv, err := endorsement.Parse(signedProp, time.Time{})
+	if err != nil {
+		t.Fatalf("endorsement.Parse: %v", err)
+	}
+	resp, err := s.builder.Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
+		Writes: []blocks.KVWrite{{Key: key, Value: []byte("v")}},
+	}, eventPayload, nil))
+	if err != nil {
+		t.Fatalf("Endorse: %v", err)
+	}
+	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: []*peer.ProposalResponse{resp}}
+	if err := s.submitter.Submit(ctx, end); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	// waitForKeyValue establishes finality: handlers run sequentially, so capture
+	// is guaranteed to have seen the block by the time this returns.
+	s.waitForKeyValue(t, key, "v")
+	tx := s.capture.findTx(inv.TxID)
+	if tx == nil {
+		t.Fatalf("tx %q not found in captured blocks", inv.TxID)
+	}
+
+	// input args
+	if len(tx.InputArgs) != len(args) {
+		t.Fatalf("InputArgs: got %d elements, want %d", len(tx.InputArgs), len(args))
+	}
+	for i, arg := range args {
+		if string(tx.InputArgs[i]) != string(arg) {
+			t.Errorf("InputArgs[%d]: got %q, want %q", i, tx.InputArgs[i], arg)
+		}
+	}
+
+	// events
+	if len(tx.Events) == 0 {
+		t.Fatal("Events: expected non-empty")
+	}
+	evt := &peer.ChaincodeEvent{}
+	if err := proto.Unmarshal(tx.Events, evt); err != nil {
+		t.Fatalf("unmarshal Events: %v", err)
+	}
+	if string(evt.Payload) != string(eventPayload) {
+		t.Errorf("event payload: got %q, want %q", evt.Payload, eventPayload)
 	}
 }
 

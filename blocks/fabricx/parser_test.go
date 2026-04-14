@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"google.golang.org/protobuf/proto"
@@ -121,5 +122,96 @@ func TestParse_ReadWriteZeroVersion(t *testing.T) {
 	rws := btx.NsRWS[0].RWS
 	if len(rws.Reads) != 1 || rws.Reads[0].Version == nil || rws.Reads[0].Version.BlockNum != 0 {
 		t.Errorf("expected version {BlockNum:0}, got %+v", rws.Reads[0].Version)
+	}
+}
+
+func TestParse_Events(t *testing.T) {
+	txID := "txid-event"
+	eventPayload := []byte(`{"type":"Transfer"}`)
+	eventBytes, err := proto.Marshal(&peer.ChaincodeEvent{
+		ChaincodeId: "ns",
+		TxId:        txID,
+		EventName:   "log",
+		Payload:     eventPayload,
+	})
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+
+	tx := &applicationpb.Tx{
+		Namespaces: []*applicationpb.TxNamespace{{
+			NsId: "ns",
+			BlindWrites: []*applicationpb.Write{
+				{Key: []byte("k"), Value: []byte("v")},
+				{Key: []byte(eventKey + txID), Value: eventBytes},
+			},
+		}},
+	}
+	env := buildEnvelope(t, txID, tx)
+
+	p := NewBlockParser(sdk.NoOpLogger{})
+	btx, err := p.ParseTx(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// event bytes must be populated
+	if len(btx.Events) == 0 {
+		t.Fatal("expected Events to be set")
+	}
+	evt := &peer.ChaincodeEvent{}
+	if err := proto.Unmarshal(btx.Events, evt); err != nil {
+		t.Fatalf("unmarshal events: %v", err)
+	}
+	if string(evt.Payload) != string(eventPayload) {
+		t.Errorf("event payload: got %q, want %q", evt.Payload, eventPayload)
+	}
+
+	// synthetic write must be stripped from NsRWS
+	rws := btx.NsRWS[0].RWS
+	if len(rws.Writes) != 1 || rws.Writes[0].Key != "k" {
+		t.Errorf("expected only real write in NsRWS, got %+v", rws.Writes)
+	}
+}
+
+func TestParse_InputArgs(t *testing.T) {
+	txID := "txid-input"
+	args := [][]byte{[]byte("invoke"), []byte("arg1"), []byte("arg2")}
+	inputBytes, err := proto.Marshal(&peer.ChaincodeInput{Args: args})
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+
+	tx := &applicationpb.Tx{
+		Namespaces: []*applicationpb.TxNamespace{{
+			NsId: "ns",
+			BlindWrites: []*applicationpb.Write{
+				{Key: []byte("k"), Value: []byte("v")},
+				{Key: []byte(inputKey + txID), Value: inputBytes},
+			},
+		}},
+	}
+	env := buildEnvelope(t, txID, tx)
+
+	p := NewBlockParser(sdk.NoOpLogger{})
+	btx, err := p.ParseTx(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// input args must be populated
+	if len(btx.InputArgs) != len(args) {
+		t.Fatalf("InputArgs len: got %d, want %d", len(btx.InputArgs), len(args))
+	}
+	for i, arg := range args {
+		if string(btx.InputArgs[i]) != string(arg) {
+			t.Errorf("InputArgs[%d]: got %q, want %q", i, btx.InputArgs[i], arg)
+		}
+	}
+
+	// synthetic write must be stripped from NsRWS
+	rws := btx.NsRWS[0].RWS
+	if len(rws.Writes) != 1 || rws.Writes[0].Key != "k" {
+		t.Errorf("expected only real write in NsRWS, got %+v", rws.Writes)
 	}
 }

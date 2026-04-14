@@ -28,7 +28,7 @@ type EndorsementBuilder struct {
 	signer sdk.Signer
 }
 
-// Endorse takes the relevant parts of an Invocation, a read/write set and optional event,
+// Endorse generates a signed proposal response based on the invocation and execution result.
 func (e EndorsementBuilder) Endorse(in endorsement.Invocation, res endorsement.ExecutionResult) (*peer.ProposalResponse, error) {
 	simResBytes, err := marshalRWSet(&res.RWS, in.CCID.Name)
 	if err != nil {

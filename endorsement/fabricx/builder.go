@@ -20,6 +20,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	EventKey = "_event_"
+	InputKey = "_input_"
+)
+
 func NewEndorsementBuilder(signer sdk.Signer) EndorsementBuilder {
 	return EndorsementBuilder{signer: signer}
 }
@@ -28,8 +33,44 @@ type EndorsementBuilder struct {
 	signer sdk.Signer
 }
 
+// Endorse generates a signed proposal response based on the invocation and execution result.
+// It follows the Fabric-X transaction and signature format, wrapped in a Fabric envelope.
 func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.ExecutionResult) (*peer.ProposalResponse, error) {
-	// TODO: event
+	var event []byte
+	var err error
+
+	// Fabric-X does not have a canonical way to register a chaincode event.
+	// To help with compatibility, we provide the option to mimic the Fabric
+	// behavior by adding a blind write under a known key.
+	if len(res.Event) > 0 {
+		event, err = proto.Marshal(&peer.ChaincodeEvent{
+			Payload:     res.Event,
+			ChaincodeId: inv.CCID.Name,
+			TxId:        inv.TxID,
+			EventName:   "log",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal events: %w", err)
+		}
+		res.RWS.Writes = append(res.RWS.Writes, blocks.KVWrite{
+			Key:   EventKey + inv.TxID,
+			Value: event,
+		})
+	}
+
+	// Fabric-X does not store the chaincode invocation. We store the arguments
+	// as a blind write with a known key to give the same options to users as
+	// they have in Fabric. This lets the SDK behave the same across protocols.
+	if len(inv.Args) > 0 {
+		in, err := proto.Marshal(&peer.ChaincodeInput{Args: inv.Args})
+		if err != nil {
+			return nil, fmt.Errorf("marshal input: %w", err)
+		}
+		res.RWS.Writes = append(res.RWS.Writes, blocks.KVWrite{
+			Key:   InputKey + inv.TxID,
+			Value: in,
+		})
+	}
 
 	prpBytes, err := marshalRWSet(res.RWS, inv.CCID.Name)
 	if err != nil {

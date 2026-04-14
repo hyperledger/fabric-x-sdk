@@ -11,12 +11,20 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric/protoutil"
 	"google.golang.org/protobuf/proto"
+)
+
+// eventKey and inputKey mirror the constants in endorsement/fabricx.
+// Both sides of the wire format independently own these definitions.
+const (
+	eventKey = "_event_"
+	inputKey = "_input_"
 )
 
 func NewBlockParser(log sdk.Logger) BlockParser {
@@ -96,8 +104,6 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 		NsRWS: make([]blocks.NsReadWriteSet, len(ptx.Namespaces)),
 	}
 
-	// TODO: input and event.
-
 	// read / write set
 	for i, ns := range ptx.Namespaces {
 		nsrws := blocks.NsReadWriteSet{
@@ -108,13 +114,27 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 			},
 		}
 
-		// Fabric-X has no deletion concept: a nil value is stored as NULL in the
-		// committer's database and does not remove the key. IsDelete is always false.
 		for _, bw := range ns.BlindWrites {
-			nsrws.RWS.Writes = append(nsrws.RWS.Writes, blocks.KVWrite{
-				Key:   string(bw.Key),
-				Value: bw.Value,
-			})
+			key := string(bw.Key)
+			switch key {
+			// endorsements created with the SDK may include a Fabric-style event as a write.
+			case eventKey + tx.ID:
+				tx.Events = bw.Value
+			// endorsements created with the SDK include the input args as a write.
+			case inputKey + tx.ID:
+				input := &peer.ChaincodeInput{}
+				if err := proto.Unmarshal(bw.Value, input); err == nil {
+					tx.InputArgs = input.Args
+				}
+			// normal world state write.
+			default:
+				// Fabric-X has no deletion concept: a nil value is stored as NULL in the
+				// committer's database and does not remove the key. IsDelete is always false.
+				nsrws.RWS.Writes = append(nsrws.RWS.Writes, blocks.KVWrite{
+					Key:   key,
+					Value: bw.Value,
+				})
+			}
 		}
 		for _, rw := range ns.ReadWrites {
 			read := blocks.KVRead{Key: string(rw.Key)}
