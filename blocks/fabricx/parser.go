@@ -118,10 +118,10 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 			key := string(bw.Key)
 			switch key {
 			// endorsements created with the SDK may include a Fabric-style event as a write.
-			case eventKey + tx.ID:
+			case eventKey:
 				tx.Events = bw.Value
 			// endorsements created with the SDK include the input args as a write.
-			case inputKey + tx.ID:
+			case inputKey:
 				input := &peer.ChaincodeInput{}
 				if err := proto.Unmarshal(bw.Value, input); err == nil {
 					tx.InputArgs = input.Args
