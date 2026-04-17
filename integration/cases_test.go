@@ -401,13 +401,19 @@ func testInputArgsAndEvents(t *testing.T, s *testSetup) {
 	if err != nil {
 		t.Fatalf("endorsement.Parse: %v", err)
 	}
-	resp, err := s.builder.Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
-		Writes: []blocks.KVWrite{{Key: key, Value: []byte("v")}},
-	}, eventPayload, nil))
-	if err != nil {
-		t.Fatalf("Endorse: %v", err)
+
+	var responses []*peer.ProposalResponse
+	for _, b := range s.builders {
+		resp, err := b.Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
+			Writes: []blocks.KVWrite{{Key: key, Value: []byte("v")}},
+		}, eventPayload, nil))
+		if err != nil {
+			t.Fatalf("Endorse: %v", err)
+		}
+		responses = append(responses, resp)
 	}
-	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: []*peer.ProposalResponse{resp}}
+
+	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: responses}
 	if err := s.submitter.Submit(ctx, end); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}

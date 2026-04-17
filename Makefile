@@ -49,20 +49,13 @@ test-x:
 stop-x:
 	@docker rm -f fabric-x-committer-test-node
 
-.PHONY: init-fablo
-init-fablo:
-	cd testdata/fablo && ./fablo up
-	cd testdata/fablo && ./fablo snapshot snapshot
-
 .PHONY: start-fablo
 start-fablo:
-	cd testdata/fablo && ./fablo prune || true
-	cd testdata/fablo && ./fablo restore snapshot
-	cd testdata/fablo && ./fablo start
+	cd testdata/fablo && ./fablo up
 
 .PHONY: stop-fablo
 stop-fablo:
-	cd testdata/fablo && ./fablo stop
+	cd testdata/fablo && ./fablo prune
 
 .PHONY: test-fablo
 test-fablo:
