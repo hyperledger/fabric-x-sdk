@@ -1,6 +1,6 @@
 module github.com/hyperledger/fabric-x-sdk
 
-go 1.26
+go 1.26.2
 
 tool (
 	github.com/google/addlicense
@@ -10,7 +10,6 @@ tool (
 )
 
 require (
-	github.com/hyperledger/fabric v1.4.0-rc1.0.20240918034325-94590aa4332b
 	github.com/hyperledger/fabric-lib-go v1.1.3
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
 	github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548

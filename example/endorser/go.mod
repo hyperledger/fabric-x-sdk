@@ -5,7 +5,7 @@
 
 module github.com/hyperledger/fabric-x-sdk/example/endorser
 
-go 1.26
+go 1.26.2
 
 replace github.com/hyperledger/fabric-x-sdk => ../..
 
@@ -29,7 +29,6 @@ require (
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/hyperledger/fabric v1.4.0-rc1.0.20240918034325-94590aa4332b // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

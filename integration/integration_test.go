@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-common/protoutil"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -33,7 +34,6 @@ import (
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/state"
-	"github.com/hyperledger/fabric/protoutil"
 	"google.golang.org/grpc/grpclog"
 	_ "modernc.org/sqlite"
 )
