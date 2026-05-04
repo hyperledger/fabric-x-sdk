@@ -48,13 +48,21 @@ type TxParser interface {
 }
 
 // Start creates grpc servers for the peer and orderer on random ports on localhost.
-func Start(namespace, networkType string, cfg Config) (*Network, error) {
+func Start(namespace, networkType string, cfg Config, db1 blocks.RecordGetter) (*Network, error) {
 	logger := sdk.NewStdLogger("fabrictest")
 
 	// in memory world state db
 	db, err := state.NewWriteDB("mychannel", ":memory:")
 	if err != nil {
 		return nil, err
+	}
+
+	var rg blocks.RecordGetter
+	// by default, read MVCC conflicts from our own DB
+	rg = db
+	if db1 != nil {
+		// if we're given an external database from which we can read MVCC conflicts, use that
+		rg = db1
 	}
 
 	// some specifics for either fabric or fabric-x
@@ -64,10 +72,10 @@ func Start(namespace, networkType string, cfg Config) (*Network, error) {
 	switch networkType {
 	case "fabric":
 		parser = fabric.NewBlockParser(logger)
-		validator = fabric.NewMVCCValidator(db, logger)
+		validator = fabric.NewMVCCValidator(rg, logger)
 	case "fabric-x":
 		parser = fabricx.NewBlockParser(logger)
-		validator = fabricx.NewMVCCValidator(db, logger)
+		validator = fabricx.NewMVCCValidator(rg, logger)
 	default:
 		return nil, errors.New("networkType must be fabric or fabric-x")
 	}

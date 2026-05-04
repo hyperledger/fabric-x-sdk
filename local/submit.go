@@ -16,17 +16,21 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"github.com/hyperledger/fabric-x-sdk/state"
 )
+
+type VersionedDB interface {
+	BlockNumber(ctx context.Context) (uint64, error)
+	Handle(ctx context.Context, b blocks.Block) error
+	Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error)
+}
 
 // LocalSubmitter directly stores the writes in the shared database.
 // It can be used with any ledger type by providing the relevant TxPackager
 // and TxParser, dependent on the ledger type in the endorsement.
 type LocalSubmitter struct {
-	sharedState       *state.VersionedDB
+	sharedState       VersionedDB
 	packager          TxPackager
 	parser            TxParser
-	blockCounter      uint64
 	channel           string
 	namespace         string
 	monotonicVersions bool // if true, MVCC read validation uses WriteRecord.Version instead of BlockNum/TxNum
@@ -42,18 +46,16 @@ type TxParser interface {
 	ParseTx(env *common.Envelope) (*blocks.Transaction, error)
 }
 
-func NewLocalSubmitter(sharedState *state.VersionedDB, channel, namespace string, packager TxPackager, parser TxParser, monotonicVersions bool) *LocalSubmitter {
-	num, _ := sharedState.BlockNumber(context.TODO())
-
+func NewLocalSubmitter(sharedState VersionedDB, channel, namespace string, packager TxPackager, parser TxParser, monotonicVersions bool) *LocalSubmitter {
 	c := &LocalSubmitter{
 		sharedState:       sharedState,
 		channel:           channel,
 		namespace:         namespace,
 		packager:          packager,
 		parser:            parser,
-		blockCounter:      num,
 		monotonicVersions: monotonicVersions,
 	}
+
 	return c
 }
 
@@ -98,7 +100,7 @@ func (s *LocalSubmitter) Close() error {
 	return nil
 }
 
-func validateReads(st *state.VersionedDB, ns string, blockNum uint64, reads []blocks.KVRead, fabricX bool) error {
+func validateReads(st VersionedDB, ns string, blockNum uint64, reads []blocks.KVRead, fabricX bool) error {
 	for _, r := range reads {
 		rec, err := st.Get(ns, r.Key, blockNum)
 		if err != nil {

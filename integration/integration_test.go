@@ -141,7 +141,7 @@ func newWithTestBackend(t *testing.T, networkType string, batching ...fabrictest
 	if len(batching) > 0 {
 		batchCfg = batching[0]
 	}
-	nw, err := fabrictest.Start("basic", networkType, batchCfg)
+	nw, err := fabrictest.Start("basic", networkType, batchCfg, nil)
 	if err != nil {
 		t.Fatalf("fabrictest.Start: %v", err)
 	}
