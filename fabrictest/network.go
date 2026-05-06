@@ -11,6 +11,7 @@ SPDX-License-Identifier: Apache-2.0
 package fabrictest
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -48,7 +49,8 @@ type TxParser interface {
 }
 
 // Start creates grpc servers for the peer and orderer on random ports on localhost.
-func Start(namespace, networkType string, cfg Config, db1 blocks.RecordGetter) (*Network, error) {
+// The servers are stopped when ctx is cancelled.
+func Start(ctx context.Context, namespace, networkType string, cfg Config, db1 blocks.RecordGetter) (*Network, error) {
 	logger := sdk.NewStdLogger("fabrictest")
 
 	// in memory world state db
@@ -110,6 +112,10 @@ func Start(namespace, networkType string, cfg Config, db1 blocks.RecordGetter) (
 
 	go n.oSrv.Serve(ordererLis)
 	go n.pSrv.Serve(peerLis)
+	go func() {
+		<-ctx.Done()
+		n.Stop()
+	}()
 
 	return n, nil
 }

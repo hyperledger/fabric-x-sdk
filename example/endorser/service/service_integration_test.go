@@ -63,11 +63,10 @@ type endorserSetup struct {
 func newWithTestBackend(t *testing.T, networkType string) *endorserSetup {
 	t.Helper()
 
-	fnet, err := fabrictest.Start("basic", networkType, fabrictest.Config{})
+	fnet, err := fabrictest.Start(t.Context(), "basic", networkType, fabrictest.Config{})
 	if err != nil {
 		t.Fatalf("fabrictest.Start: %v", err)
 	}
-	t.Cleanup(fnet.Stop)
 
 	cfg := config.Config{
 		ChannelID: "mychannel",
@@ -410,11 +409,10 @@ func testEndorserSetThenOverwrite(t *testing.T, s *endorserSetup) {
 // after the synchronizer has completed its initial sync with the peer.
 // This follows canonical Kubernetes readiness semantics.
 func TestWaitForReadyWaitsForSync(t *testing.T) {
-	fnet, err := fabrictest.Start("basic", "fabric-x", fabrictest.Config{})
+	fnet, err := fabrictest.Start(t.Context(), "basic", "fabric-x", fabrictest.Config{})
 	if err != nil {
 		t.Fatalf("fabrictest.Start: %v", err)
 	}
-	t.Cleanup(fnet.Stop)
 
 	svcCfg := service.ServiceConfig{
 		ChannelID: "mychannel",
