@@ -148,6 +148,9 @@ type Orderer struct {
 
 // Broadcast sends a signed envelope with an endorsed EndorserTransaction for ordering.
 func (o *Orderer) Broadcast(ctx context.Context, env *common.Envelope) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	stream, err := o.client.Broadcast(ctx)
 	if err != nil {
 		return fmt.Errorf("open stream: %w", err)
