@@ -130,6 +130,7 @@ func listen(port int) (net.Listener, int, error) {
 	return lis, p, err
 }
 
+// Stop gracefully shuts down the orderer and peer gRPC servers.
 func (n *Network) Stop() {
 	n.oSrv.Stop()
 	n.pSrv.Stop()

@@ -13,6 +13,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 )
 
+// NewProcessor returns a Processor that uses the given parser and runs all handlers in order.
 func NewProcessor(parser BlockParser, handlers []BlockHandler) *Processor {
 	return &Processor{
 		parser:   parser,
@@ -20,13 +21,19 @@ func NewProcessor(parser BlockParser, handlers []BlockHandler) *Processor {
 	}
 }
 
+// BlockParser converts a raw Fabric envelope into a parsed Block.
+// Use blocks/fabric.NewBlockParser or blocks/fabricx.NewBlockParser depending on the network type.
 type BlockParser interface {
 	Parse(*common.Block) (Block, error)
 }
+
+// BlockHandler processes a parsed block. Implementations should be registered with a Processor.
+// Returning an error stops processing and propagates the error to the caller.
 type BlockHandler interface {
 	Handle(context.Context, Block) error
 }
 
+// Processor parses blocks and dispatches them to a chain of handlers.
 type Processor struct {
 	parser   BlockParser
 	handlers []BlockHandler

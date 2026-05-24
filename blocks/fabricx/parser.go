@@ -27,10 +27,12 @@ const (
 	inputKey = "_input_"
 )
 
+// NewBlockParser returns a BlockParser that decodes Fabric-X blocks.
 func NewBlockParser(log sdk.Logger) BlockParser {
 	return BlockParser{log: log}
 }
 
+// BlockParser decodes raw Fabric-X block envelopes into the SDK's Block representation.
 type BlockParser struct {
 	log sdk.Logger
 }

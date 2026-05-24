@@ -20,10 +20,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// NewBlockParser returns a BlockParser that decodes classic Hyperledger Fabric blocks.
 func NewBlockParser(log sdk.Logger) BlockParser {
 	return BlockParser{log: log}
 }
 
+// BlockParser decodes raw Fabric block envelopes into the SDK's Block representation.
 type BlockParser struct {
 	log sdk.Logger
 }

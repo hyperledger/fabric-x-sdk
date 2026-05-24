@@ -21,14 +21,18 @@ import (
 )
 
 const (
+	// EventKey is the write key used to carry a chaincode event in a Fabric-X transaction.
 	EventKey = "_event_"
+	// InputKey is the write key used to preserve chaincode input args in a Fabric-X transaction.
 	InputKey = "_input_"
 )
 
+// NewEndorsementBuilder returns an EndorsementBuilder that produces Fabric-X-format signed responses.
 func NewEndorsementBuilder(signer sdk.Signer) EndorsementBuilder {
 	return EndorsementBuilder{signer: signer}
 }
 
+// EndorsementBuilder creates Fabric-X-format signed ProposalResponses wrapped in a Fabric envelope.
 type EndorsementBuilder struct {
 	signer sdk.Signer
 }

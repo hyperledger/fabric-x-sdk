@@ -15,17 +15,22 @@ type ReadWriteSet struct {
 	Writes []KVWrite
 }
 
+// KVRead is a read observed during transaction simulation. Version is nil when the key was absent.
 type KVRead struct {
 	Key     string
 	Version *Version
 }
 
+// KVWrite is a write or delete recorded during transaction simulation.
 type KVWrite struct {
 	Key      string
 	IsDelete bool
 	Value    []byte
 }
 
+// Version identifies the state of a key at the time it was read. The fields used
+// for MVCC conflict detection depend on the ledger type: Fabric uses (BlockNum, TxNum)
+// while Fabric-X uses only BlockNum (which maps to the per-key monotonic version).
 type Version struct {
 	BlockNum uint64
 	TxNum    uint64
@@ -43,11 +48,13 @@ type WriteRecord struct {
 	TxID      string
 }
 
+// NsReadWriteSet groups the reads and writes that belong to a single namespace.
 type NsReadWriteSet struct {
 	Namespace string
 	RWS       ReadWriteSet
 }
 
+// Block is the parsed representation of a Fabric or Fabric-X block.
 type Block struct {
 	Number     uint64
 	Hash       []byte
@@ -59,6 +66,8 @@ type Block struct {
 	Transactions []Transaction
 }
 
+// Transaction is a parsed endorser transaction from a block. Both valid and invalid
+// transactions are included; check the Valid field before processing writes.
 type Transaction struct {
 	ID        string
 	Number    int64

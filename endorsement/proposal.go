@@ -46,7 +46,7 @@ type Invocation struct {
 type ExecutionResult struct {
 	// RWS is the set of reads and writes as a result of the execution.
 	RWS blocks.ReadWriteSet
-	// Event is the
+	// Event is an optional opaque payload that was emitted as a chaincode event.
 	Event []byte
 	// Status is a code that should follow the HTTP status codes.
 	Status int32
@@ -64,6 +64,8 @@ func (res ExecutionResult) Response() *peer.Response {
 	}
 }
 
+// BadRequest returns a 400 ExecutionResult. Use it when the endorser rejects the invocation
+// due to invalid input.
 func BadRequest(msg string) ExecutionResult {
 	return ExecutionResult{
 		Status:  http.StatusBadRequest,
@@ -72,6 +74,7 @@ func BadRequest(msg string) ExecutionResult {
 	}
 }
 
+// Success returns a 200 ExecutionResult with the given read-write set, event, and response payload.
 func Success(rws blocks.ReadWriteSet, event []byte, payload []byte) ExecutionResult {
 	return ExecutionResult{
 		RWS:     rws,
