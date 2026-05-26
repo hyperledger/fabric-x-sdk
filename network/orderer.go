@@ -158,9 +158,6 @@ func (o *Orderer) Broadcast(ctx context.Context, env *common.Envelope) error {
 	if err := stream.Send(env); err != nil {
 		return err
 	}
-	if err := stream.CloseSend(); err != nil {
-		return err
-	}
 	resp, err := stream.Recv()
 	if err != nil {
 		return err
