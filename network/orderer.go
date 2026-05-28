@@ -13,8 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -36,7 +34,7 @@ type OrdererConf struct {
 	TLS     TLSConfig
 }
 
-func NewOrderer(c OrdererConf) (*Orderer, error) {
+func NewOrderer(ctx context.Context, c OrdererConf) (*Orderer, error) {
 	if err := c.TLS.Validate(); err != nil {
 		return nil, fmt.Errorf("orderer %s: invalid TLS config: %w", c.Address, err)
 	}
@@ -61,6 +59,7 @@ func NewOrderer(c OrdererConf) (*Orderer, error) {
 	}
 
 	return &Orderer{
+		ctx:    ctx,
 		conn:   conn,
 		client: orderer.NewAtomicBroadcastClient(conn),
 		addr:   c.Address,
@@ -76,14 +75,14 @@ type FabricSubmitter struct {
 	waitAfterSubmit time.Duration
 }
 
-func NewSubmitter(config []OrdererConf, packager TxPackager, waitAfterSubmit time.Duration, logger sdk.Logger) (*FabricSubmitter, error) {
+func NewSubmitter(ctx context.Context, config []OrdererConf, packager TxPackager, waitAfterSubmit time.Duration, logger sdk.Logger) (*FabricSubmitter, error) {
 	if len(config) == 0 {
 		return nil, errors.New("no orderers configured")
 	}
 
 	orderers := make([]*Orderer, len(config))
 	for i, cfg := range config {
-		if o, err := NewOrderer(cfg); err != nil {
+		if o, err := NewOrderer(ctx, cfg); err != nil {
 			return nil, err
 		} else {
 			orderers[i] = o
@@ -98,26 +97,23 @@ func NewSubmitter(config []OrdererConf, packager TxPackager, waitAfterSubmit tim
 	}, nil
 }
 
-// Submit to each of the registered orderers, returns an error if more than half errored.
+// Submit to each of the registered orderers sequentially, returns an error if more than half errored.
+// Uses persistent streams with fire-and-forget sends for better performance.
 func (s FabricSubmitter) Submit(ctx context.Context, end sdk.Endorsement) error {
 	env, err := s.packager.PackageTx(end)
 	if err != nil {
 		return fmt.Errorf("package proposal: %w", err)
 	}
 
-	var wg sync.WaitGroup
-	var errs int32
+	var errs int
 	for i, o := range s.orderers {
-		wg.Go(func() {
-			if err := o.Broadcast(ctx, env); err != nil {
-				s.logger.Warnf("orderer %d (%s): broadcast failed: %v", i, o.addr, err)
-				atomic.AddInt32(&errs, 1)
-			}
-		})
+		if err := o.Broadcast(ctx, env); err != nil {
+			s.logger.Warnf("orderer %d (%s): broadcast failed: %v", i, o.addr, err)
+			errs++
+		}
 	}
-	wg.Wait()
 
-	if int(errs)*2 > len(s.orderers) {
+	if errs*2 > len(s.orderers) {
 		return errors.New("error broadcasting")
 	}
 
@@ -139,35 +135,90 @@ func (s *FabricSubmitter) Close() error {
 	return errors.Join(errs...)
 }
 
-// Orderer is a Fabric or Fabric-X orderer.
+// Orderer is a Fabric or Fabric-X orderer with persistent stream support.
 type Orderer struct {
+	ctx    context.Context
 	conn   *grpc.ClientConn
 	client orderer.AtomicBroadcastClient
 	addr   string
+
+	// Stream management
+	streamCtx    context.Context
+	streamCancel context.CancelFunc
+	stream       orderer.AtomicBroadcast_BroadcastClient
 }
 
 // Broadcast sends a signed envelope with an endorsed EndorserTransaction for ordering.
-func (o *Orderer) Broadcast(ctx context.Context, env *common.Envelope) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+// Uses a persistent stream with automatic recreation on failure.
+// The context parameter is ignored - stream lifecycle is managed by the orderer's context.
+func (o *Orderer) Broadcast(_ context.Context, env *common.Envelope) error {
+	var err error
+	var isUpdate bool
+	// Try twice: once with existing stream, second time with a new one.
+	for !isUpdate {
+		isUpdate, err = o.updateStream()
+		if err != nil {
+			return err
+		}
+		err = o.stream.Send(env)
+		if err == nil {
+			return nil
+		}
+		// Force stream recreation on error.
+		if o.streamCancel != nil {
+			o.streamCancel()
+		}
+	}
+	return fmt.Errorf("failed to send message: %w", err)
+}
 
-	stream, err := o.client.Broadcast(ctx)
+// updateStream creates or reuses the broadcast stream.
+// Returns (true, nil) if stream was updated, (false, nil) if existing stream is still valid.
+func (o *Orderer) updateStream() (bool, error) {
+	// Check if existing stream is still valid
+	if o.stream != nil && o.streamCtx != nil && o.streamCtx.Err() == nil {
+		return false, nil
+	}
+
+	// Cancel previous stream context if it exists
+	if o.streamCancel != nil {
+		o.streamCancel()
+	}
+
+	// Create new stream context
+	o.streamCtx, o.streamCancel = context.WithCancel(o.ctx)
+
+	var err error
+	o.stream, err = o.client.Broadcast(o.streamCtx)
 	if err != nil {
-		return fmt.Errorf("open stream: %w", err)
+		if o.streamCancel != nil {
+			o.streamCancel()
+		}
+		return true, fmt.Errorf("failed to create broadcast stream: %w", err)
 	}
-	if err := stream.Send(env); err != nil {
-		return err
-	}
-	resp, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-	if resp.Status != common.Status_SUCCESS {
-		return fmt.Errorf("orderer rejected: %s", resp.Status.String())
-	}
-	return nil
+	// Start background goroutine to drain responses
+	// This prevents the stream from blocking and allows fire-and-forget sends
+	workerCtx := o.streamCtx
+	workerStream := o.stream
+	workerCancel := o.streamCancel
+	go func() {
+		defer workerCancel()
+		for workerCtx.Err() == nil {
+			_, streamErr := workerStream.Recv()
+			if streamErr != nil {
+				// Stream error, will trigger recreation on next send
+				return
+			}
+			// Successfully received response, continue draining
+		}
+	}()
+
+	return true, nil
 }
 
 func (o *Orderer) Close() error {
+	if o.streamCancel != nil {
+		o.streamCancel()
+	}
 	return o.conn.Close()
 }

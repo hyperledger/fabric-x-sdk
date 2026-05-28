@@ -292,14 +292,14 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		if err != nil {
 			t.Fatalf("NewSynchronizaer: %v", err)
 		}
-		submitter, err = nfab.NewSubmitter(cfg.Orderers, signer, 0, log)
+		submitter, err = nfab.NewSubmitter(t.Context(), cfg.Orderers, signer, 0, log)
 	case "fabric-x":
 		builder = efabx.NewEndorsementBuilder(signer)
 		sync, err = nfabx.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB, capture)
 		if err != nil {
 			t.Fatalf("NewSynchronizaer: %v", err)
 		}
-		submitter, err = nfabx.NewSubmitter(cfg.Orderers, signer, 0, log)
+		submitter, err = nfabx.NewSubmitter(t.Context(), cfg.Orderers, signer, 0, log)
 	}
 	if err != nil {
 		t.Fatalf("NewSubmitter: %v", err)

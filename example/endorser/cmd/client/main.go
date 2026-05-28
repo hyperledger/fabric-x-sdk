@@ -156,9 +156,9 @@ need to confirm that the transaction has been committed.`,
 			var submitter *network.FabricSubmitter
 			switch cfg.Protocol {
 			case "fabric":
-				submitter, err = nfab.NewSubmitter(ordererConfs, signer, 0, logger)
+				submitter, err = nfab.NewSubmitter(cmd.Context(), ordererConfs, signer, 0, logger)
 			case "fabric-x", "":
-				submitter, err = nfabx.NewSubmitter(ordererConfs, signer, 0, logger)
+				submitter, err = nfabx.NewSubmitter(cmd.Context(), ordererConfs, signer, 0, logger)
 			default:
 				return fmt.Errorf("unknown protocol %q: must be \"fabric\" or \"fabric-x\"", cfg.Protocol)
 			}

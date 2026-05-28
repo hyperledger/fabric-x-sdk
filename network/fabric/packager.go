@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package fabric
 
 import (
+	"context"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -29,6 +30,6 @@ func (p TxPackager) PackageTx(end sdk.Endorsement) (*common.Envelope, error) {
 	return protoutil.CreateSignedTx(end.Proposal, p.signer, end.Responses...)
 }
 
-func NewSubmitter(orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
-	return network.NewSubmitter(orderers, NewTxPackager(s), waitAfterSubmit, logger)
+func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
+	return network.NewSubmitter(ctx, orderers, NewTxPackager(s), waitAfterSubmit, logger)
 }
