@@ -8,6 +8,7 @@ package fabricx
 
 import (
 	"bytes"
+	"context"
 	b64 "encoding/base64"
 	"errors"
 	"fmt"
@@ -174,6 +175,6 @@ func CreateSignedTx(
 	return &common.Envelope{Payload: paylBytes, Signature: sig}, nil
 }
 
-func NewSubmitter(orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
-	return network.NewSubmitter(orderers, NewTxPackager(s), waitAfterSubmit, logger)
+func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
+	return network.NewSubmitter(ctx, orderers, NewTxPackager(s), waitAfterSubmit, logger)
 }

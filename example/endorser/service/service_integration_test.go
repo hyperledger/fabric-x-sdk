@@ -63,7 +63,7 @@ type endorserSetup struct {
 func newWithTestBackend(t *testing.T, networkType string) *endorserSetup {
 	t.Helper()
 
-	fnet, err := fabrictest.Start(t.Context(), "basic", networkType, fabrictest.Config{})
+	fnet, err := fabrictest.Start(t.Context(), "basic", networkType, fabrictest.Config{}, nil)
 	if err != nil {
 		t.Fatalf("fabrictest.Start: %v", err)
 	}
@@ -192,9 +192,9 @@ func newSetup(t *testing.T, cfg config.Config, serviceSigner, clientSigner sdk.S
 	var submitter *network.FabricSubmitter
 	switch cfg.Protocol {
 	case "fabric":
-		submitter, err = nfab.NewSubmitter(orderers, clientSigner, 0, log)
+		submitter, err = nfab.NewSubmitter(syncCtx, orderers, clientSigner, 0, log)
 	case "fabric-x":
-		submitter, err = nfabx.NewSubmitter(orderers, clientSigner, 0, log)
+		submitter, err = nfabx.NewSubmitter(syncCtx, orderers, clientSigner, 0, log)
 	}
 	if err != nil {
 		t.Fatalf("NewSubmitter: %v", err)
@@ -409,7 +409,7 @@ func testEndorserSetThenOverwrite(t *testing.T, s *endorserSetup) {
 // after the synchronizer has completed its initial sync with the peer.
 // This follows canonical Kubernetes readiness semantics.
 func TestWaitForReadyWaitsForSync(t *testing.T) {
-	fnet, err := fabrictest.Start(t.Context(), "basic", "fabric-x", fabrictest.Config{})
+	fnet, err := fabrictest.Start(t.Context(), "basic", "fabric-x", fabrictest.Config{}, nil)
 	if err != nil {
 		t.Fatalf("fabrictest.Start: %v", err)
 	}
