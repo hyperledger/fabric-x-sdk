@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -142,7 +143,8 @@ type Orderer struct {
 	client orderer.AtomicBroadcastClient
 	addr   string
 
-	// Stream management
+	mu           sync.Mutex
+	closed       bool
 	streamCtx    context.Context
 	streamCancel context.CancelFunc
 	stream       orderer.AtomicBroadcast_BroadcastClient
@@ -151,74 +153,69 @@ type Orderer struct {
 // Broadcast sends a signed envelope with an endorsed EndorserTransaction for ordering.
 // Uses a persistent stream with automatic recreation on failure.
 // The context parameter is ignored - stream lifecycle is managed by the orderer's context.
-func (o *Orderer) Broadcast(_ context.Context, env *common.Envelope) error {
-	var err error
-	var isUpdate bool
-	// Try twice: once with existing stream, second time with a new one.
-	for !isUpdate {
-		isUpdate, err = o.updateStream()
-		if err != nil {
-			return err
-		}
-		err = o.stream.Send(env)
-		if err == nil {
-			return nil
-		}
-		// Force stream recreation on error.
-		if o.streamCancel != nil {
-			o.streamCancel()
-		}
+func (o *Orderer) Broadcast(ctx context.Context, env *common.Envelope) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	return fmt.Errorf("failed to send message: %w", err)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if err := o.ensureStream(); err != nil {
+		return err
+	}
+	if err := o.stream.Send(env); err == nil {
+		return nil
+	}
+
+	// Send failed: force recreation and retry once.
+	o.streamCancel()
+	if err := o.ensureStream(); err != nil {
+		return err
+	}
+	if err := o.stream.Send(env); err != nil {
+		return fmt.Errorf("broadcast to %s: %w", o.addr, err)
+	}
+	return nil
 }
 
-// updateStream creates or reuses the broadcast stream.
-// Returns (true, nil) if stream was updated, (false, nil) if existing stream is still valid.
-func (o *Orderer) updateStream() (bool, error) {
-	// Check if existing stream is still valid
-	if o.stream != nil && o.streamCtx != nil && o.streamCtx.Err() == nil {
-		return false, nil
+// ensureStream creates a new broadcast stream if the current one is absent or canceled.
+// Caller must hold o.mu.
+func (o *Orderer) ensureStream() error {
+	if o.closed {
+		return fmt.Errorf("orderer %s: closed", o.addr)
 	}
-
-	// Cancel previous stream context if it exists
+	if o.stream != nil && o.streamCtx.Err() == nil {
+		return nil
+	}
 	if o.streamCancel != nil {
 		o.streamCancel()
 	}
-
-	// Create new stream context
+	o.stream = nil
 	o.streamCtx, o.streamCancel = context.WithCancel(o.ctx)
-
-	var err error
-	o.stream, err = o.client.Broadcast(o.streamCtx)
+	stream, err := o.client.Broadcast(o.streamCtx)
 	if err != nil {
-		if o.streamCancel != nil {
-			o.streamCancel()
-		}
-		return true, fmt.Errorf("failed to create broadcast stream: %w", err)
+		o.streamCancel()
+		return fmt.Errorf("open broadcast stream to %s: %w", o.addr, err)
 	}
-	// Start background goroutine to drain responses
-	// This prevents the stream from blocking and allows fire-and-forget sends
-	workerCtx := o.streamCtx
-	workerStream := o.stream
-	workerCancel := o.streamCancel
+	o.stream = stream
+	cancel := o.streamCancel
 	go func() {
-		defer workerCancel()
-		for workerCtx.Err() == nil {
-			_, streamErr := workerStream.Recv()
-			if streamErr != nil {
-				// Stream error, will trigger recreation on next send
+		defer cancel()
+		for {
+			if _, err := stream.Recv(); err != nil {
 				return
 			}
-			// Successfully received response, continue draining
 		}
 	}()
-
-	return true, nil
+	return nil
 }
 
 func (o *Orderer) Close() error {
+	o.mu.Lock()
+	o.closed = true
 	if o.streamCancel != nil {
 		o.streamCancel()
 	}
+	o.mu.Unlock()
 	return o.conn.Close()
 }
