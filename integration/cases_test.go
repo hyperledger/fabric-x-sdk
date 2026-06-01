@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package integration
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/network"
+	"github.com/hyperledger/fabric-x-sdk/notification"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -41,6 +43,7 @@ var cases = []testCase{
 	{"EndorsementClientExecute", testEndorsementClientExecuteTransaction},
 	{"BadRequestEndorsement", testBadRequestEndorsement},
 	{"InputArgsAndEvents", testInputArgsAndEvents},
+	{"Notifications", testNotifications},
 }
 
 // runAll executes every case as a subtest against s.
@@ -447,6 +450,85 @@ func testInputArgsAndEvents(t *testing.T, s *testSetup) {
 	if string(evt.Payload) != string(eventPayload) {
 		t.Errorf("event payload: got %q, want %q", evt.Payload, eventPayload)
 	}
+}
+
+func testNotifications(t *testing.T, s *testSetup) {
+	if !s.supportsNotifications {
+		t.Skip("notification service not available for this backend")
+	}
+
+	key := t.Name() + "/" + rand.Text()
+
+	// Build the endorsement in scope so we can access inv.TxID before submitting.
+	signedProp, err := network.NewSignedProposal(s.signer, s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
+	if err != nil {
+		t.Fatalf("NewSignedProposal: %v", err)
+	}
+	inv, err := endorsement.Parse(signedProp, time.Time{})
+	if err != nil {
+		t.Fatalf("endorsement.Parse: %v", err)
+	}
+	var responses []*peer.ProposalResponse
+	for _, b := range s.builders {
+		resp, err := b.Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
+			Writes: []blocks.KVWrite{{Key: key, Value: []byte("notified")}},
+		}, nil, nil))
+		if err != nil {
+			t.Fatalf("Endorse: %v", err)
+		}
+		responses = append(responses, resp)
+	}
+	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: responses}
+
+	// Subscribe to the txID before submitting.
+	received := make(chan notification.TxStatusEvent, 1)
+	processor := notification.NewProcessor(
+		[]notification.TxStatusHandler{&txStatusCapture{events: received}},
+		sdk.NewTestLogger(t, "notifier"),
+	)
+	notifier := notification.NewNotifier(s.peer, processor)
+
+	txIDs := make(chan []string, 1)
+	txIDs <- []string{inv.TxID}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	go func() {
+		if err := notifier.Subscribe(ctx, txIDs); err != nil && ctx.Err() == nil {
+			t.Errorf("notifier: %v", err)
+		}
+	}()
+
+	if err := s.submitter.Submit(t.Context(), end); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	select {
+	case event := <-received:
+		if event.TxID != inv.TxID {
+			t.Errorf("got txID %q, want %q", event.TxID, inv.TxID)
+		}
+		if !event.Valid() {
+			t.Errorf("expected COMMITTED, got status %v", event.Status)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for notification")
+	}
+}
+
+type txStatusCapture struct {
+	events chan notification.TxStatusEvent
+}
+
+func (c *txStatusCapture) Handle(_ context.Context, events []notification.TxStatusEvent) error {
+	for _, e := range events {
+		select {
+		case c.events <- e:
+		default:
+		}
+	}
+	return nil
 }
 
 func testTwoTransactions(t *testing.T, s *testSetup) {

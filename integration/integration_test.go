@@ -25,6 +25,7 @@ import (
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	bfabx "github.com/hyperledger/fabric-x-sdk/blocks/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
@@ -113,15 +114,17 @@ func (h *captureHandler) findTx(txID string) *blocks.Transaction {
 }
 
 type testSetup struct {
-	channel           string
-	namespace         string
-	networkType       string // "fabric" or "fabric-x"
-	localDB           *state.VersionedDB
-	monotonicVersions bool
-	signer            sdk.Signer
-	builders          []endorsement.Builder
-	submitter         *network.FabricSubmitter
-	capture           *captureHandler
+	channel               string
+	namespace             string
+	networkType           string // "fabric" or "fabric-x"
+	localDB               *state.VersionedDB
+	monotonicVersions     bool
+	signer                sdk.Signer
+	builders              []endorsement.Builder
+	submitter             *network.FabricSubmitter
+	capture               *captureHandler
+	peer                  *nfabx.Peer // non-nil only for fabric-x
+	supportsNotifications bool        // true only for the real Fabric-X committer
 }
 
 type config struct {
@@ -254,7 +257,9 @@ func newTestCommitterSetup(t *testing.T) *testSetup {
 	}
 	conn.Close()
 
-	return newSetup(t, "fabric-x", cfg)
+	s := newSetup(t, "fabric-x", cfg)
+	s.supportsNotifications = true
+	return s
 }
 
 func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
@@ -285,6 +290,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	var builder endorsement.Builder
 	var submitter *network.FabricSubmitter
 	var sync *network.Synchronizer
+	var fxPeer *nfabx.Peer
 	switch networkType {
 	case "fabric":
 		builder = efab.NewEndorsementBuilder(signer)
@@ -295,9 +301,18 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		submitter, err = nfab.NewSubmitter(t.Context(), cfg.Orderers, signer, 0, log)
 	case "fabric-x":
 		builder = efabx.NewEndorsementBuilder(signer)
-		sync, err = nfabx.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB, capture)
+		fxPeer, err = nfabx.NewPeer(cfg.Peer, cfg.Channel, signer)
 		if err != nil {
-			t.Fatalf("NewSynchronizaer: %v", err)
+			t.Fatalf("NewPeer: %v", err)
+		}
+		sync, err = network.NewSynchronizer(
+			localDB,
+			fxPeer,
+			blocks.NewProcessor(bfabx.NewBlockParser(log), []blocks.BlockHandler{localDB, capture}),
+			log,
+		)
+		if err != nil {
+			t.Fatalf("NewSynchronizer: %v", err)
 		}
 		submitter, err = nfabx.NewSubmitter(t.Context(), cfg.Orderers, signer, 0, log)
 	}
@@ -320,6 +335,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		builders:          []endorsement.Builder{builder},
 		submitter:         submitter,
 		capture:           capture,
+		peer:              fxPeer,
 	}
 }
 

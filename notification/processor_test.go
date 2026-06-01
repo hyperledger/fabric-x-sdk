@@ -127,5 +127,3 @@ func TestProcessorMultipleHandlers(t *testing.T) {
 		t.Fatalf("expected both handlers to receive 1 event")
 	}
 }
-
-// Made with Bob

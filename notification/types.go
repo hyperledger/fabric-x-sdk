@@ -36,5 +36,3 @@ func (e TxStatusEvent) Valid() bool {
 type TxStatusHandler interface {
 	Handle(ctx context.Context, events []TxStatusEvent) error
 }
-
-// Made with Bob
