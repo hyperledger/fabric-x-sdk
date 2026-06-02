@@ -149,14 +149,10 @@ func convertNotificationResponse(res *committerpb.NotificationResponse) []notifi
 			Status: committerpb.Status_STATUS_UNSPECIFIED,
 		})
 	}
-	if r := res.RejectedTxIds; r != nil {
-		for _, txID := range r.TxIds {
-			events = append(events, notification.TxStatusEvent{
-				TxID:   txID,
-				Status: committerpb.Status_STATUS_UNSPECIFIED,
-			})
-		}
-	}
+	// Note: RejectedTxIds field was added in a later version of fabric-x-common.
+	// The current version (v0.1.1-0.20260219094834-26c5a49ed548) only has
+	// TxStatusEvents and TimeoutTxIds fields. Rejections will be handled
+	// when the SDK upgrades to a newer version of fabric-x-common.
 	return events
 }
 
