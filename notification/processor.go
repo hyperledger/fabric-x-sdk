@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 )
 
@@ -82,4 +83,25 @@ func (n *Notifier) Subscribe(ctx context.Context, txIDs <-chan []string) error {
 // SetDefaultTimeout changes the default timeout for future subscription requests.
 func (n *Notifier) SetDefaultTimeout(timeout time.Duration) {
 	n.defaultTimeout = timeout
+}
+
+// TxStatusEvent represents a transaction status notification from the
+// Fabric-X Notification Service.
+type TxStatusEvent struct {
+	TxID     string
+	BlockNum uint64
+	TxNum    uint32
+	Status   committerpb.Status
+}
+
+// Valid returns true if the transaction was committed successfully.
+func (e TxStatusEvent) Valid() bool {
+	return e.Status == committerpb.Status_COMMITTED
+}
+
+// TxStatusHandler processes batches of transaction status events.
+// Handlers are invoked sequentially for each batch of events received
+// from the notification service.
+type TxStatusHandler interface {
+	Handle(ctx context.Context, events []TxStatusEvent) error
 }

@@ -146,8 +146,16 @@ func convertNotificationResponse(res *committerpb.NotificationResponse) []notifi
 	for _, txID := range res.TimeoutTxIds {
 		events = append(events, notification.TxStatusEvent{
 			TxID:   txID,
-			Status: 0,
+			Status: committerpb.Status_STATUS_UNSPECIFIED,
 		})
+	}
+	if r := res.RejectedTxIds; r != nil {
+		for _, txID := range r.TxIds {
+			events = append(events, notification.TxStatusEvent{
+				TxID:   txID,
+				Status: committerpb.Status_STATUS_UNSPECIFIED,
+			})
+		}
 	}
 	return events
 }
