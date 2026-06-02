@@ -12,7 +12,7 @@ tool (
 require (
 	github.com/hyperledger/fabric-lib-go v1.1.3
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
-	github.com/hyperledger/fabric-x-common v0.1.1-0.20260219094834-26c5a49ed548
+	github.com/hyperledger/fabric-x-common v0.2.5-0.20260526151648-855f12b2d438
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.48.0
