@@ -12,7 +12,6 @@ import (
 	b64 "encoding/base64"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
@@ -21,6 +20,7 @@ import (
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/network"
+	"github.com/hyperledger/fabric-x-sdk/notification"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -151,8 +151,10 @@ func CreateTx(proposal *peer.Proposal, resps ...*peer.ProposalResponse) (*common
 	return &common.Envelope{Payload: paylBytes}, nil
 }
 
-// NewSubmitter is a convenience constructor that wires together a Fabric-X TxPackager
-// and a FabricSubmitter for Fabric-X orderers.
-func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
-	return network.NewSubmitter(ctx, orderers, NewTxPackager(), waitAfterSubmit, logger)
+// NewSubmitter is a convenience constructor that wires together a Fabric-X
+// TxPackager and a Submitter for Fabric-X orderers. finality is optional and may
+// be nil (fire-and-forget); pass a notification.FinalityListener to enable
+// SubmitAndWait.
+func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, finality notification.FinalityProvider, logger sdk.Logger) (*network.Submitter, error) {
+	return network.NewSubmitter(ctx, orderers, NewTxPackager(), finality, logger)
 }

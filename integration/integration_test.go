@@ -129,7 +129,8 @@ type testSetup struct {
 	monotonicVersions     bool
 	signer                sdk.Signer
 	builders              []endorsement.Builder
-	submitter             *network.FabricSubmitter
+	submitter             *network.Submitter
+	orderers              []network.OrdererConf // for tests that build their own submitter
 	capture               *captureHandler
 	peer                  *nfabx.Peer // non-nil only for fabric-x
 	supportsNotifications bool        // true only for the real Fabric-X committer
@@ -304,7 +305,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	capture := &captureHandler{}
 
 	var builder endorsement.Builder
-	var submitter *network.FabricSubmitter
+	var submitter *network.Submitter
 	var sync *network.Synchronizer
 	var fxPeer *nfabx.Peer
 	switch networkType {
@@ -314,7 +315,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		if err != nil {
 			t.Fatalf("NewSynchronizaer: %v", err)
 		}
-		submitter, err = nfab.NewSubmitter(t.Context(), cfg.Orderers, signer, 0, log)
+		submitter, err = nfab.NewSubmitter(t.Context(), cfg.Orderers, signer, nil, log)
 	case "fabric-x":
 		builder = efabx.NewEndorsementBuilder(signer)
 		fxPeer, err = nfabx.NewPeer(cfg.Peer, cfg.Channel, signer)
@@ -330,7 +331,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		if err != nil {
 			t.Fatalf("NewSynchronizer: %v", err)
 		}
-		submitter, err = nfabx.NewSubmitter(t.Context(), cfg.Orderers, 0, log)
+		submitter, err = nfabx.NewSubmitter(t.Context(), cfg.Orderers, nil, log)
 	}
 	if err != nil {
 		t.Fatalf("NewSubmitter: %v", err)
@@ -350,6 +351,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		signer:            signer,
 		builders:          []endorsement.Builder{builder},
 		submitter:         submitter,
+		orderers:          cfg.Orderers,
 		capture:           capture,
 		peer:              fxPeer,
 	}

@@ -11,7 +11,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 )
@@ -47,10 +46,10 @@ func (m *mockAllTxHandler) HandleBatch(_ context.Context, batch notification.All
 func TestAllTxStreamer_DeliversBatchesToHandlers(t *testing.T) {
 	batches := []notification.AllTxBatch{
 		{BlockNumber: 1, Events: []notification.CommittedTxEvent{
-			{TxID: "tx1", BlockNum: 1, TxNum: 0, Status: committerpb.Status_COMMITTED},
+			{TxID: "tx1", BlockNum: 1, TxNum: 0, Status: notification.StatusCommitted},
 		}},
 		{BlockNumber: 2, Events: []notification.CommittedTxEvent{
-			{TxID: "tx2", BlockNum: 2, TxNum: 0, Status: committerpb.Status_ABORTED_MVCC_CONFLICT},
+			{TxID: "tx2", BlockNum: 2, TxNum: 0, Status: notification.StatusInvalid},
 		}},
 	}
 
@@ -77,7 +76,7 @@ func TestAllTxStreamer_DeliversBatchesToHandlers(t *testing.T) {
 func TestAllTxStreamer_MultipleHandlers(t *testing.T) {
 	batches := []notification.AllTxBatch{
 		{BlockNumber: 5, Events: []notification.CommittedTxEvent{
-			{TxID: "txA", BlockNum: 5, TxNum: 0, Status: committerpb.Status_COMMITTED},
+			{TxID: "txA", BlockNum: 5, TxNum: 0, Status: notification.StatusCommitted},
 		}},
 	}
 
@@ -125,7 +124,7 @@ func TestAllTxStreamer_RequestPassedToPeer(t *testing.T) {
 
 	req := &notification.StreamAllRequest{
 		FilterNamespaces:     []string{"mycc"},
-		FilterStatus:         []committerpb.Status{committerpb.Status_COMMITTED},
+		FilterStatus:         []notification.Status{notification.StatusCommitted},
 		IncludeReadWriteSets: true,
 	}
 	_ = streamer.Stream(context.Background(), req)
@@ -147,12 +146,12 @@ func TestAllTxStreamer_PeerErrorPropagates(t *testing.T) {
 }
 
 func TestCommittedTxEvent_Valid(t *testing.T) {
-	committed := notification.CommittedTxEvent{Status: committerpb.Status_COMMITTED}
+	committed := notification.CommittedTxEvent{Status: notification.StatusCommitted}
 	if !committed.Valid() {
 		t.Error("COMMITTED event should be valid")
 	}
 
-	aborted := notification.CommittedTxEvent{Status: committerpb.Status_ABORTED_MVCC_CONFLICT}
+	aborted := notification.CommittedTxEvent{Status: notification.StatusInvalid}
 	if aborted.Valid() {
 		t.Error("ABORTED event should not be valid")
 	}

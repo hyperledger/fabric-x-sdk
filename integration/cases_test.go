@@ -17,6 +17,7 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 	"google.golang.org/protobuf/proto"
 )
@@ -43,6 +44,7 @@ var cases = []testCase{
 	{"BadRequestEndorsement", testBadRequestEndorsement},
 	{"InputArgsAndEvents", testInputArgsAndEvents},
 	{"Notifications", testNotifications},
+	{"FinalityListener", testFinalityListener},
 }
 
 // runAll executes every case as a subtest against s.
@@ -516,6 +518,87 @@ func (c *txStatusCapture) Handle(_ context.Context, events []notification.TxStat
 		}
 	}
 	return nil
+}
+
+func testFinalityListener(t *testing.T, s *testSetup) {
+	if !s.supportsNotifications || s.peer == nil {
+		t.Skip("notification service not available for this backend")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	log := sdk.NewTestLogger(t, "finality")
+	listener := notification.NewFinalityListener(s.peer, 0, log)
+	go listener.Start(ctx)
+
+	// A dedicated submitter wired with the finality listener, so SubmitAndWait
+	// waits for finality (the shared s.submitter is fire-and-forget).
+	submitter, err := nfabx.NewSubmitter(ctx, s.orderers, listener, log)
+	if err != nil {
+		t.Fatalf("NewSubmitter: %v", err)
+	}
+	defer submitter.Close() //nolint:errcheck
+
+	key := t.Name() + "/" + rand.Text()
+
+	// Happy path: verify the returned event carries the correct txID and status.
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
+	if err != nil {
+		t.Fatalf("NewInvocation: %v", err)
+	}
+	var responses []*peer.ProposalResponse
+	for _, b := range s.builders {
+		resp, err := b.Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
+			Writes: []blocks.KVWrite{{Key: key, Value: []byte("v0")}},
+		}, nil, nil))
+		if err != nil {
+			t.Fatalf("Endorse: %v", err)
+		}
+		responses = append(responses, resp)
+	}
+	event, err := submitter.SubmitAndWait(ctx, sdk.Endorsement{Proposal: inv.Proposal, Responses: responses})
+	if err != nil {
+		t.Fatalf("SubmitAndWait: %v", err)
+	}
+	if event.TxID != inv.TxID {
+		t.Errorf("got txID %q, want %q", event.TxID, inv.TxID)
+	}
+	if !event.Valid() {
+		t.Errorf("expected COMMITTED, got %v", event.Status)
+	}
+	s.waitForKeyValue(t, key, "v0")
+
+	// MVCC rejection: two txs with conflicting read sets at the version just written.
+	_, rws1 := s.simulate(t, 0, key)
+	rws1.Writes = []blocks.KVWrite{{Key: key, Value: []byte("v1")}}
+	_, rws2 := s.simulate(t, 0, key)
+	rws2.Writes = []blocks.KVWrite{{Key: key, Value: []byte("v2")}}
+
+	makeEnd := func(rws blocks.ReadWriteSet) sdk.Endorsement {
+		return s.endorse(t, &localEndorser{
+			result: func(_ endorsement.Invocation) endorsement.ExecutionResult {
+				return endorsement.Success(rws, nil, nil)
+			},
+		}, [][]byte{[]byte("invoke")})
+	}
+
+	mvcc1, err := submitter.SubmitAndWait(ctx, makeEnd(rws1))
+	if err != nil {
+		t.Fatalf("SubmitAndWait mvcc1: %v", err)
+	}
+	if !mvcc1.Valid() {
+		t.Errorf("mvcc1: expected COMMITTED, got %v", mvcc1.Status)
+	}
+
+	// tx2 has a stale read version after mvcc1 committed; expect MVCC rejection.
+	mvcc2, err := submitter.SubmitAndWait(ctx, makeEnd(rws2))
+	if err != nil {
+		t.Fatalf("SubmitAndWait mvcc2: %v", err)
+	}
+	if mvcc2.Valid() {
+		t.Errorf("mvcc2: expected MVCC rejection, got COMMITTED")
+	}
 }
 
 func testTwoTransactions(t *testing.T, s *testSetup) {

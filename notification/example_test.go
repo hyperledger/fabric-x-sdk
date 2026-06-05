@@ -116,10 +116,13 @@ func ExampleNotifier_Subscribe_simpleUsage() {
 	}
 }
 
-// ExampleNotifier_SetDefaultTimeout demonstrates using a custom timeout.
-func ExampleNotifier_SetDefaultTimeout() {
-	ctx := context.Background()
-	log := sdk.NewStdLogger("notification-example")
+// ExampleFinalityListener demonstrates using FinalityListener with a Submitter
+// to wait for a transaction to reach finality before proceeding.
+func ExampleFinalityListener() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log := sdk.NewStdLogger("finality-example")
 
 	peer, err := fxnet.NewPeer(
 		network.PeerConf{
@@ -134,19 +137,17 @@ func ExampleNotifier_SetDefaultTimeout() {
 	}
 	defer peer.Close() //nolint:errcheck
 
-	processor := notification.NewProcessor(
-		[]notification.TxStatusHandler{&txStatusLogger{log: log}},
-		log,
-	)
+	// Create a FinalityListener and start its reconnecting stream loop before
+	// creating the submitter, so registrations are forwarded to the sidecar.
+	listener := notification.NewFinalityListener(peer, 0, log)
+	go listener.Start(ctx)
 
-	notifier := notification.NewNotifier(peer, processor)
-	notifier.SetDefaultTimeout(30 * time.Second)
-
-	txIDs := make(chan []string, 1)
-	txIDs <- []string{"fast-tx-1", "fast-tx-2"}
-	close(txIDs)
-
-	if err := notifier.Subscribe(ctx, txIDs); err != nil {
-		log.Errorf("Subscribe error: %v", err)
+	// Pass the listener to the submitter (nil would make it fire-and-forget only).
+	// Submit never waits; SubmitAndWait waits for finality via the listener.
+	submitter, err := fxnet.NewSubmitter(ctx, nil /* orderers omitted for example */, listener, log)
+	if err != nil {
+		log.Errorf("Failed to create submitter: %v", err)
+		return
 	}
+	_ = submitter // use submitter.Submit (fire-and-forget) or submitter.SubmitAndWait
 }
