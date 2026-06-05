@@ -137,6 +137,56 @@ func notificationReceiveLoop(ctx context.Context, stream committerpb.Notifier_Op
 	}
 }
 
+// StreamAllTransactions opens the sidecar's StreamAllTransactions server-stream and
+// delivers each TxEventBatch to processor until the context is cancelled or an error occurs.
+func (p *Peer) StreamAllTransactions(ctx context.Context, req *notification.StreamAllRequest, processor notification.AllTxProcessor) error {
+	stream, err := committerpb.NewNotifierClient(p.Connection()).StreamAllTransactions(ctx, toProtoStreamAllRequest(req))
+	if err != nil {
+		return fmt.Errorf("open stream-all-transactions: %w", err)
+	}
+
+	for {
+		batch, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF || ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("recv: %w", err)
+		}
+		sdkBatch := convertTxEventBatch(batch)
+		if err := processor.ProcessBatch(ctx, sdkBatch); err != nil {
+			return fmt.Errorf("process batch: %w", err)
+		}
+	}
+}
+
+func toProtoStreamAllRequest(req *notification.StreamAllRequest) *committerpb.StreamAllRequest {
+	if req == nil {
+		return &committerpb.StreamAllRequest{}
+	}
+	return &committerpb.StreamAllRequest{
+		FilterNamespaces:     req.FilterNamespaces,
+		FilterStatus:         req.FilterStatus,
+		IncludeReadWriteSets: req.IncludeReadWriteSets,
+		IncludeEndorsements:  req.IncludeEndorsements,
+	}
+}
+
+func convertTxEventBatch(batch *committerpb.TxEventBatch) notification.AllTxBatch {
+	events := make([]notification.CommittedTxEvent, len(batch.Events))
+	for i, e := range batch.Events {
+		events[i] = notification.CommittedTxEvent{
+			TxID:         e.Ref.GetTxId(),
+			BlockNum:     e.Ref.GetBlockNum(),
+			TxNum:        e.Ref.GetTxNum(),
+			Status:       e.Status,
+			Namespaces:   e.Namespaces,
+			Endorsements: e.Endorsements,
+		}
+	}
+	return notification.AllTxBatch{BlockNumber: batch.BlockNumber, Events: events}
+}
+
 func convertNotificationResponse(res *committerpb.NotificationResponse) []notification.TxStatusEvent {
 	var events []notification.TxStatusEvent
 	for _, txStatus := range res.TxStatusEvents {
@@ -160,8 +210,12 @@ func convertNotificationResponse(res *committerpb.NotificationResponse) []notifi
 	return events
 }
 
-// NewSynchronizer creates a Synchronizer that fetches Fabric-X blocks and dispatches
-// them to the provided handlers using the Fabric-X block format.
+// NewSynchronizer creates a Fabric-X Synchronizer that streams blocks from the
+// sidecar and maintains a local world state. It supports catch-up from any block
+// height, automatic reconnection, and liveness/readiness probes.
+//
+// For a real-time feed of committed transactions without world-state maintenance,
+// use notification.AllTxStreamer with the same Peer instead.
 func NewSynchronizer(db network.BlockHeightReader, channel string, conf network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
 	peer, err := NewPeer(conf, channel, signer)
 	if err != nil {

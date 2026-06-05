@@ -4,6 +4,19 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
+// Package notification provides two complementary ways to receive committed
+// transaction events from the Fabric-X sidecar Notification Service:
+//
+// Notifier wraps OpenNotificationStream, a bidirectional stream where you push
+// transaction IDs to watch and receive back their commit status. Use this when
+// you submit a transaction and want to know when it commits or fails.
+//
+// AllTxStreamer wraps StreamAllTransactions, a server-streaming RPC that delivers
+// every committed transaction (optionally filtered by namespace or status) as a
+// real-time feed. Use this when you want to react to ledger activity from other
+// participants, build audit logs, or maintain secondary indexes. Note that
+// StreamAllTransactions is a live feed and does not support historical replay;
+// use network.Synchronizer when you need to catch up from a past block height.
 package notification
 
 import (
