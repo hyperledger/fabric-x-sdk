@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// NewPeer dials a Fabric-X committer sidecar and binds it to the given channel and signer.
 func NewPeer(conf network.PeerConf, channel string, signer sdk.Signer) (*Peer, error) {
 	peer, err := network.NewPeer(conf)
 	if err != nil {
@@ -30,16 +31,19 @@ func NewPeer(conf network.PeerConf, channel string, signer sdk.Signer) (*Peer, e
 	return &Peer{Peer: peer, channel: channel, signer: signer}, nil
 }
 
+// Peer is a channel-bound client for a Fabric-X committer sidecar.
 type Peer struct {
 	*network.Peer
 	channel string
 	signer  sdk.Signer
 }
 
+// SubscribeBlocks streams blocks from startBlock, invoking processor for each one.
 func (p *Peer) SubscribeBlocks(ctx context.Context, startBlock uint64, processor network.BlockProcessor) error {
 	return p.Peer.SubscribeBlocks(ctx, p.channel, startBlock, p.signer, processor)
 }
 
+// BlockHeight returns the current block height from the committer's BlockQueryService.
 func (p *Peer) BlockHeight(ctx context.Context) (uint64, error) {
 	client := committerpb.NewBlockQueryServiceClient(p.Connection())
 	info, err := client.GetBlockchainInfo(ctx, &emptypb.Empty{})
@@ -156,6 +160,8 @@ func convertNotificationResponse(res *committerpb.NotificationResponse) []notifi
 	return events
 }
 
+// NewSynchronizer creates a Synchronizer that fetches Fabric-X blocks and dispatches
+// them to the provided handlers using the Fabric-X block format.
 func NewSynchronizer(db network.BlockHeightReader, channel string, conf network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
 	peer, err := NewPeer(conf, channel, signer)
 	if err != nil {

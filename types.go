@@ -17,6 +17,8 @@ type Endorsement struct {
 	Responses []*peer.ProposalResponse
 }
 
+// Signer signs messages and serializes the signing identity into bytes
+// that can be embedded in a Fabric transaction envelope.
 type Signer interface {
 	Sign(msg []byte) ([]byte, error)
 	Serialize() ([]byte, error)

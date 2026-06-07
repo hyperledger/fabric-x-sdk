@@ -35,6 +35,7 @@ type OrdererConf struct {
 	TLS     TLSConfig
 }
 
+// NewOrderer dials an orderer and returns a client ready to broadcast transactions.
 func NewOrderer(ctx context.Context, c OrdererConf) (*Orderer, error) {
 	if err := c.TLS.Validate(); err != nil {
 		return nil, fmt.Errorf("orderer %s: invalid TLS config: %w", c.Address, err)
@@ -76,6 +77,8 @@ type FabricSubmitter struct {
 	waitAfterSubmit time.Duration
 }
 
+// NewSubmitter dials all configured orderers and returns a FabricSubmitter.
+// Prefer the protocol-specific constructors in network/fabric or network/fabricx over calling this directly.
 func NewSubmitter(ctx context.Context, config []OrdererConf, packager TxPackager, waitAfterSubmit time.Duration, logger sdk.Logger) (*FabricSubmitter, error) {
 	if len(config) == 0 {
 		return nil, errors.New("no orderers configured")
@@ -210,6 +213,7 @@ func (o *Orderer) ensureStream() error {
 	return nil
 }
 
+// Close closes the connection to the orderer.
 func (o *Orderer) Close() error {
 	o.mu.Lock()
 	o.closed = true

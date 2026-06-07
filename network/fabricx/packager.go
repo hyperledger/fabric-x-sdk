@@ -25,16 +25,19 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// NewTxPackager returns a TxPackager that assembles Fabric-X transaction envelopes.
 func NewTxPackager(s sdk.Signer) TxPackager {
 	return TxPackager{
 		signer: s,
 	}
 }
 
+// TxPackager assembles a signed Fabric-X transaction envelope from an endorsement.
 type TxPackager struct {
 	signer sdk.Signer
 }
 
+// PackageTx combines the proposal and endorser responses into a signed Fabric-X envelope.
 func (p TxPackager) PackageTx(end sdk.Endorsement) (*common.Envelope, error) {
 	return CreateSignedTx(end.Proposal, p.signer, end.Responses...)
 }
@@ -175,6 +178,8 @@ func CreateSignedTx(
 	return &common.Envelope{Payload: paylBytes, Signature: sig}, nil
 }
 
+// NewSubmitter is a convenience constructor that wires together a Fabric-X TxPackager
+// and a FabricSubmitter for Fabric-X orderers.
 func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
 	return network.NewSubmitter(ctx, orderers, NewTxPackager(s), waitAfterSubmit, logger)
 }

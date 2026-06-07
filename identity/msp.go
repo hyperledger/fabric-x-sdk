@@ -64,6 +64,7 @@ func SignerFromMSP(dir, mspID string) (Signer, error) {
 	}, nil
 }
 
+// Sign hashes msg with SHA-256 and returns a low-S DER-encoded ECDSA signature.
 func (s Signer) Sign(msg []byte) ([]byte, error) {
 	return sign(s.priv_sk, msg)
 }
@@ -83,6 +84,7 @@ func sign(k *ecdsa.PrivateKey, message []byte) ([]byte, error) {
 	return utils.MarshalECDSASignature(r, s)
 }
 
+// Serialize returns the MSP identity as a serialized proto that can be embedded in Fabric envelopes.
 func (s Signer) Serialize() ([]byte, error) {
 	return proto.Marshal(&msp.SerializedIdentity{Mspid: s.mspID, IdBytes: s.signcert})
 }

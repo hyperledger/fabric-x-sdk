@@ -29,11 +29,15 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Peer is a gRPC client for a Fabric peer or Fabric-X committer sidecar.
+// Use the protocol-specific constructors in network/fabric or network/fabricx for a
+// higher-level API that pre-binds a channel and signer.
 type Peer struct {
 	conn   *grpc.ClientConn
 	client peer.EndorserClient
 }
 
+// NewPeer dials the peer at the address in conf and returns a client.
 func NewPeer(c PeerConf) (*Peer, error) {
 	if err := c.TLS.Validate(); err != nil {
 		return nil, fmt.Errorf("peer %s: invalid TLS config: %w", c.Address, err)

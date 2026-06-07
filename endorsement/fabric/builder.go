@@ -20,10 +20,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// NewEndorsementBuilder returns an EndorsementBuilder that produces Fabric-format signed responses.
 func NewEndorsementBuilder(signer sdk.Signer) EndorsementBuilder {
 	return EndorsementBuilder{signer: signer}
 }
 
+// EndorsementBuilder creates Fabric-format signed ProposalResponses from an execution result.
 type EndorsementBuilder struct {
 	signer sdk.Signer
 }

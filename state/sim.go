@@ -13,7 +13,8 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-// Log is a type of event.
+// Log is an Ethereum-style event emitted during transaction execution.
+// It is recorded by AddLog and included in the endorsed transaction.
 type Log struct {
 	Address []byte
 	Topics  [][]byte
@@ -142,6 +143,7 @@ func (s *SimulationStore) AddLog(address []byte, topics [][]byte, data []byte) {
 	})
 }
 
+// Result returns the accumulated read-write set, ready to be passed to endorsement.Success.
 func (s *SimulationStore) Result() blocks.ReadWriteSet {
 	rws := blocks.ReadWriteSet{
 		Reads:  make([]blocks.KVRead, 0, len(s.reads)),
@@ -156,6 +158,7 @@ func (s *SimulationStore) Result() blocks.ReadWriteSet {
 	return rws
 }
 
+// Logs returns all logs recorded via AddLog during this simulation.
 func (s *SimulationStore) Logs() []Log {
 	return s.logs
 }

@@ -18,6 +18,8 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
+// VersionedDB is the storage interface required by LocalSubmitter.
+// state.VersionedDB satisfies this interface.
 type VersionedDB interface {
 	BlockNumber(ctx context.Context) (uint64, error)
 	Handle(ctx context.Context, b blocks.Block) error
@@ -46,6 +48,8 @@ type TxParser interface {
 	ParseTx(env *common.Envelope) (*blocks.Transaction, error)
 }
 
+// NewLocalSubmitter creates a LocalSubmitter. Set monotonicVersions=true for Fabric-X MVCC
+// semantics (per-key version counter) and false for classic Fabric (blockNum/txNum pairs).
 func NewLocalSubmitter(sharedState VersionedDB, channel, namespace string, packager TxPackager, parser TxParser, monotonicVersions bool) *LocalSubmitter {
 	c := &LocalSubmitter{
 		sharedState:       sharedState,
@@ -59,6 +63,8 @@ func NewLocalSubmitter(sharedState VersionedDB, channel, namespace string, packa
 	return c
 }
 
+// Submit packages the endorsement, validates MVCC reads against the shared state,
+// and writes the resulting block directly to the database without going through an orderer.
 func (s LocalSubmitter) Submit(ctx context.Context, end sdk.Endorsement) error {
 	// package the transaction in the format that the backend ledger expects...
 	env, err := s.packager.PackageTx(end)
