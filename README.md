@@ -52,7 +52,22 @@ To run the integration tests against a real Fabric-X network, see the [integrati
 | **integration** | Provides a couple of tests that exercise a large surface of the SDK. It provides some assurance on the internal consistency of the project. By default, the internal `fabrictest` fake network is used. It can also be pointed to real networks.|
 | **local**       | Can be used to mock a Fabric backend for testing. Instead of submitting to an orderer, it can insert read/write sets directly in a local database. Some MVCC checks are provided, but should not be trusted to be 1:1 compatible with a real network. |
 | **network**     | Has clients for peers and orderers, along with simple wrappers to submit a transaction and to synchronize a local database with a committer. |
+| **notification** | Subscribes to transaction events from the Fabric-X sidecar. `Notifier` tracks specific transactions you submitted; `AllTxStreamer` delivers a real-time feed of every committed transaction (optionally filtered by namespace or status). |
 | **state**       | Provides a versioned insert-only database that can be used to construct a local world state. For example, an endorser could use it to perform actions on a recent state in order to generate a read/write set based on custom business logic. |
+
+## Receiving transaction events
+
+There are three complementary mechanisms for receiving committed transaction data, each suited to a different need:
+
+| Mechanism | When to use |
+| --------- | ----------- |
+| `network.Synchronizer` | Maintain a local world state or full block history. Supports catch-up from any block height, reconnection, and liveness/readiness probes. Requires a signer. |
+| `notification.Notifier` | Know when a transaction *you* submitted commits or fails. Opens a bidirectional stream; you push txIDs to watch and receive back their status. |
+| `notification.AllTxStreamer` | React to *all* committed transactions (optionally filtered by namespace or status). Real-time feed only — no historical replay. Useful for audit logs, analytics, secondary indexes, or watching activity from other participants. |
+
+All three can be used independently and composed in the same application. Both `Notifier` and `AllTxStreamer` are backed by the Fabric-X sidecar's Notification Service and require no signer.
+
+---
 
 For example, if you were building a block explorer, you would take the `network.Synchronizer`, load it with an `identity.Signer` and point to the committer sidecar. With help of the `blocks.Processor`, the `fabric(x).Parser` and a custom handler, you extract the information you want to store from the blocks that are coming in through the Synchronizer. Then you build your application around it.
 
