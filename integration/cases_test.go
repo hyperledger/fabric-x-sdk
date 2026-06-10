@@ -17,7 +17,6 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
-	"github.com/hyperledger/fabric-x-sdk/network"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 	"google.golang.org/protobuf/proto"
 )
@@ -329,13 +328,9 @@ func testAddLog(t *testing.T, s *testSetup) {
 		t.Fatalf("marshal logs: %v", err)
 	}
 
-	signedProp, err := network.NewSignedProposal(s.signer, s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, [][]byte{[]byte("invoke")})
 	if err != nil {
-		t.Fatalf("NewSignedProposal: %v", err)
-	}
-	inv, err := endorsement.Parse(signedProp, time.Time{})
-	if err != nil {
-		t.Fatalf("endorsement.Parse: %v", err)
+		t.Fatalf("NewInvocation: %v", err)
 	}
 	var responses []*peer.ProposalResponse
 	for _, b := range s.builders {
@@ -396,13 +391,9 @@ func testInputArgsAndEvents(t *testing.T, s *testSetup) {
 	args := [][]byte{[]byte("invoke"), []byte("arg1"), []byte("arg2")}
 	eventPayload := []byte(`{"type":"Transfer"}`)
 
-	signedProp, err := network.NewSignedProposal(s.signer, s.channel, s.namespace, "1.0", args)
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, args)
 	if err != nil {
-		t.Fatalf("NewSignedProposal: %v", err)
-	}
-	inv, err := endorsement.Parse(signedProp, time.Time{})
-	if err != nil {
-		t.Fatalf("endorsement.Parse: %v", err)
+		t.Fatalf("NewInvocation: %v", err)
 	}
 
 	var responses []*peer.ProposalResponse
@@ -460,13 +451,9 @@ func testNotifications(t *testing.T, s *testSetup) {
 	key := t.Name() + "/" + rand.Text()
 
 	// Build the endorsement in scope so we can access inv.TxID before submitting.
-	signedProp, err := network.NewSignedProposal(s.signer, s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, [][]byte{[]byte("invoke")})
 	if err != nil {
-		t.Fatalf("NewSignedProposal: %v", err)
-	}
-	inv, err := endorsement.Parse(signedProp, time.Time{})
-	if err != nil {
-		t.Fatalf("endorsement.Parse: %v", err)
+		t.Fatalf("NewInvocation: %v", err)
 	}
 	var responses []*peer.ProposalResponse
 	for _, b := range s.builders {
