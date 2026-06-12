@@ -197,7 +197,7 @@ func TestParse_Events(t *testing.T) {
 			NsId: "ns",
 			BlindWrites: []*applicationpb.Write{
 				{Key: []byte("k"), Value: []byte("v")},
-				{Key: []byte(eventKey), Value: eventBytes},
+				{Key: []byte(eventKey + txID), Value: eventBytes},
 			},
 		}},
 	}
@@ -241,7 +241,7 @@ func TestParse_InputArgs(t *testing.T) {
 			NsId: "ns",
 			BlindWrites: []*applicationpb.Write{
 				{Key: []byte("k"), Value: []byte("v")},
-				{Key: []byte(inputKey), Value: inputBytes},
+				{Key: []byte(inputKey + txID), Value: inputBytes},
 			},
 		}},
 	}
