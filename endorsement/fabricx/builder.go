@@ -57,7 +57,7 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 			return nil, fmt.Errorf("marshal events: %w", err)
 		}
 		res.RWS.Writes = append(res.RWS.Writes, blocks.KVWrite{
-			Key:   EventKey,
+			Key:   EventKey + inv.TxID,
 			Value: event,
 		})
 	}
@@ -71,7 +71,7 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 			return nil, fmt.Errorf("marshal input: %w", err)
 		}
 		res.RWS.Writes = append(res.RWS.Writes, blocks.KVWrite{
-			Key:   InputKey,
+			Key:   InputKey + inv.TxID,
 			Value: in,
 		})
 	}
