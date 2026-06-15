@@ -16,7 +16,7 @@ import (
 )
 
 // CommittedTxEvent is a single transaction event received from StreamAllTransactions.
-// Namespaces and Endorsements are populated only when the corresponding flags were
+// Namespaces, Endorsements, and Metadata are populated only when the corresponding flags were
 // set in the StreamAllRequest.
 type CommittedTxEvent struct {
 	TxID         string
@@ -25,6 +25,7 @@ type CommittedTxEvent struct {
 	Status       committerpb.Status
 	Namespaces   []*applicationpb.TxNamespace
 	Endorsements []*applicationpb.Endorsements
+	Metadata     [][]byte
 }
 
 // Valid returns true if the transaction was committed successfully.
@@ -67,6 +68,9 @@ type StreamAllRequest struct {
 	// IncludeEndorsements requests that Endorsements be populated on each
 	// CommittedTxEvent.
 	IncludeEndorsements bool
+	// IncludeMetadata requests that Metadata (events and input args) be populated
+	// on each CommittedTxEvent.
+	IncludeMetadata bool
 }
 
 // AllTxPeer is the interface for opening a StreamAllTransactions stream.

@@ -193,11 +193,11 @@ func TestParse_Events(t *testing.T) {
 	}
 
 	tx := &applicationpb.Tx{
+		Metadata: [][]byte{nil, eventBytes}, // no input at [0], event at [1]
 		Namespaces: []*applicationpb.TxNamespace{{
 			NsId: "ns",
 			BlindWrites: []*applicationpb.Write{
 				{Key: []byte("k"), Value: []byte("v")},
-				{Key: []byte(eventKey + txID), Value: eventBytes},
 			},
 		}},
 	}
@@ -221,7 +221,7 @@ func TestParse_Events(t *testing.T) {
 		t.Errorf("event payload: got %q, want %q", evt.Payload, eventPayload)
 	}
 
-	// synthetic write must be stripped from NsRWS
+	// all writes should be in NsRWS (no synthetic writes to strip)
 	rws := btx.NsRWS[0].RWS
 	if len(rws.Writes) != 1 || rws.Writes[0].Key != "k" {
 		t.Errorf("expected only real write in NsRWS, got %+v", rws.Writes)
@@ -237,11 +237,11 @@ func TestParse_InputArgs(t *testing.T) {
 	}
 
 	tx := &applicationpb.Tx{
+		Metadata: [][]byte{inputBytes, nil}, // input at [0], no event at [1]
 		Namespaces: []*applicationpb.TxNamespace{{
 			NsId: "ns",
 			BlindWrites: []*applicationpb.Write{
 				{Key: []byte("k"), Value: []byte("v")},
-				{Key: []byte(inputKey + txID), Value: inputBytes},
 			},
 		}},
 	}
@@ -263,7 +263,7 @@ func TestParse_InputArgs(t *testing.T) {
 		}
 	}
 
-	// synthetic write must be stripped from NsRWS
+	// all writes should be in NsRWS (no synthetic writes to strip)
 	rws := btx.NsRWS[0].RWS
 	if len(rws.Writes) != 1 || rws.Writes[0].Key != "k" {
 		t.Errorf("expected only real write in NsRWS, got %+v", rws.Writes)

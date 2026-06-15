@@ -22,10 +22,6 @@ import (
 
 // eventKey and inputKey mirror the constants in endorsement/fabricx.
 // Both sides of the wire format independently own these definitions.
-const (
-	eventKey = "_event_"
-	inputKey = "_input_"
-)
 
 // NewBlockParser returns a BlockParser that decodes Fabric-X blocks.
 func NewBlockParser(log sdk.Logger) BlockParser {
@@ -107,6 +103,18 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 		NsRWS: make([]blocks.NsReadWriteSet, len(ptx.Namespaces)),
 	}
 
+	// Extract from metadata: [0] = input args, [1] = events
+	if len(ptx.Metadata) > 0 && len(ptx.Metadata[0]) > 0 {
+		var input peer.ChaincodeInput
+		if err := proto.Unmarshal(ptx.Metadata[0], &input); err == nil {
+			tx.InputArgs = input.Args
+		}
+	}
+
+	if len(ptx.Metadata) > 1 && len(ptx.Metadata[1]) > 0 {
+		tx.Events = ptx.Metadata[1]
+	}
+
 	// read / write set
 	for i, ns := range ptx.Namespaces {
 		nsrws := blocks.NsReadWriteSet{
@@ -118,26 +126,12 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 		}
 
 		for _, bw := range ns.BlindWrites {
-			key := string(bw.Key)
-			switch key {
-			// endorsements created with the SDK may include a Fabric-style event as a write.
-			case eventKey + tx.ID:
-				tx.Events = bw.Value
-			// endorsements created with the SDK include the input args as a write.
-			case inputKey + tx.ID:
-				input := &peer.ChaincodeInput{}
-				if err := proto.Unmarshal(bw.Value, input); err == nil {
-					tx.InputArgs = input.Args
-				}
-			// normal world state write.
-			default:
-				// Fabric-X has no deletion concept: a nil value is stored as NULL in the
-				// committer's database and does not remove the key. IsDelete is always false.
-				nsrws.RWS.Writes = append(nsrws.RWS.Writes, blocks.KVWrite{
-					Key:   key,
-					Value: bw.Value,
-				})
-			}
+			// All blind writes are now normal world state writes
+			// (events and inputs are in metadata)
+			nsrws.RWS.Writes = append(nsrws.RWS.Writes, blocks.KVWrite{
+				Key:   string(bw.Key),
+				Value: bw.Value,
+			})
 		}
 		for _, rw := range ns.ReadWrites {
 			read := blocks.KVRead{Key: string(rw.Key)}
