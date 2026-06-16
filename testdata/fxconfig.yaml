@@ -1,35 +1,44 @@
+# Configuration for the fxconfig tool used by `make start-x` to administer
+# namespaces on the test committer.
+#
+# Paths are absolute inside the fabric-x-tools container: `make start-x` mounts
+# testdata/crypto at /crypto and runs fxconfig in the committer's network
+# namespace, so the services are reachable on localhost and the server cert
+# SANs (which include "localhost") match.
 logging:
   level: info
 
 msp:
-  localMspID: Org1MSP
-  configPath: testdata/crypto/peerOrganizations/Org1/users/channel_admin@org1.example.com/msp
+  localMspID: peer-org-0
+  configPath: /crypto/peerOrganizations/peer-org-0.com/users/client@peer-org-0.com/msp
 
 orderer:
   address: localhost:7050
   channel: mychannel
   tls:
     enabled: true
-    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
-    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    clientCert: /crypto/peerOrganizations/peer-org-0.com/users/client@peer-org-0.com/tls/client.crt
+    clientKey: /crypto/peerOrganizations/peer-org-0.com/users/client@peer-org-0.com/tls/client.key
     rootCerts:
-      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+      # The mock orderer's server cert is signed by the orderer org's TLS CA.
+      - /crypto/ordererOrganizations/orderer-org-0.com/msp/tlscacerts/tlsorderer-org-0-CA-cert.pem
+
 queries:
   address: localhost:7001
   tls:
     enabled: true
-    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
-    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    clientCert: /crypto/peerOrganizations/peer-org-0.com/users/client@peer-org-0.com/tls/client.crt
+    clientKey: /crypto/peerOrganizations/peer-org-0.com/users/client@peer-org-0.com/tls/client.key
     rootCerts:
-      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+      - /crypto/peerOrganizations/peer-org-0.com/msp/tlscacerts/tlspeer-org-0-CA-cert.pem
 
 notifications:
   address: localhost:4001
   tls:
     enabled: true
-    clientCert: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt
-    clientKey: testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key
+    clientCert: /crypto/peerOrganizations/peer-org-0.com/users/client@peer-org-0.com/tls/client.crt
+    clientKey: /crypto/peerOrganizations/peer-org-0.com/users/client@peer-org-0.com/tls/client.key
     rootCerts:
-      - testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt
+      - /crypto/peerOrganizations/peer-org-0.com/msp/tlscacerts/tlspeer-org-0-CA-cert.pem
   connectionTimeout: 5s
-  waitingTimeout: 5s
+  waitingTimeout: 30s
