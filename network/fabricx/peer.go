@@ -169,6 +169,7 @@ func toProtoStreamAllRequest(req *notification.StreamAllRequest) *committerpb.St
 		FilterStatus:         req.FilterStatus,
 		IncludeReadWriteSets: req.IncludeReadWriteSets,
 		IncludeEndorsements:  req.IncludeEndorsements,
+		IncludeMetadata:      req.IncludeMetadata,
 	}
 }
 
@@ -182,6 +183,7 @@ func convertTxEventBatch(batch *committerpb.TxEventBatch) notification.AllTxBatc
 			Status:       e.Status,
 			Namespaces:   e.Namespaces,
 			Endorsements: e.Endorsements,
+			Metadata:     e.Metadata,
 		}
 	}
 	return notification.AllTxBatch{BlockNumber: batch.BlockNumber, Events: events}

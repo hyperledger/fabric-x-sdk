@@ -1,6 +1,6 @@
 module github.com/hyperledger/fabric-x-sdk
 
-go 1.26.2
+go 1.26.3
 
 tool (
 	github.com/google/addlicense
@@ -10,10 +10,10 @@ tool (
 )
 
 require (
-	github.com/hyperledger/fabric-lib-go v1.1.3
+	github.com/hyperledger/fabric-lib-go v1.1.5-0.20260607181445-fc4b05c5d38f
 	github.com/hyperledger/fabric-protos-go-apiv2 v0.3.7
-	github.com/hyperledger/fabric-x-common v0.2.5
-	google.golang.org/grpc v1.81.0
+	github.com/hyperledger/fabric-x-common v0.2.6
+	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.48.0
 )
@@ -48,14 +48,13 @@ require (
 	github.com/hyperledger/aries-bbs-go v0.0.0-20240528091251-e950615f2e45 // indirect
 	github.com/hyperledger/fabric-amcl v0.0.0-20230602173724-9e02669dceb2 // indirect
 	github.com/hyperledger/fabric-x v1.0.0 // indirect
-	github.com/hyperledger/fabric-x-committer v1.0.0-alpha.1 // indirect
+	github.com/hyperledger/fabric-x-committer v1.0.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kilic/bls12-381 v0.1.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/miekg/pkcs11 v1.1.2 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
