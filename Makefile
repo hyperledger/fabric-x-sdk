@@ -8,42 +8,59 @@ checks:
 unit-tests:
 	go test ./... -short
 
+# The committer test node is self-contained: it ships its own crypto material
+# (peer-org-0 / orderer-org-0), genesis/config block and per-service configs,
+# all wired together with mTLS. We use those embedded configs as-is and only
+# override a few keys via environment variables.
+COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.3
+# fxconfig (namespace administration) ships in the fabric-x tools image.
+TOOLS_IMAGE ?= docker.io/hyperledger/fabric-x-tools:1.0.0
+
+# init-x extracts the crypto material embedded in the committer image so the
+# integration test and fxconfig can use the same identities the committer trusts.
+# The crypto is extracted with the image's restrictive modes (0750 dirs, 0600
+# files); on Linux that blocks the fxconfig tools container (a different uid)
+# from reading it over the bind mount, so we make this test material readable.
 .PHONY: init-x
 init-x:
-	@go tool cryptogen generate --config testdata/crypto-config.yaml --output testdata/crypto
-	@cd testdata && go tool configtxgen --channelID mychannel --profile OrgsChannel --outputBlock crypto/sc-genesis-block.proto.bin
+	@rm -rf testdata/crypto && mkdir -p testdata/crypto
+	@cid=$$(docker create $(COMMITTER_IMAGE)); \
+		docker cp $$cid:/root/artifacts/. testdata/crypto; \
+		docker rm $$cid >/dev/null
+	@chmod -R a+rX testdata/crypto
 
+# clean-x removes the crypto. Recreate with init-x.
 .PHONY: clean-x
 clean-x:
 	@rm -rf testdata/crypto
 
+# start-x runs the whole committer pipeline (embedded DB, mock orderer and the
+# five committer microservices) in a single container.
 .PHONY: start-x
 start-x:
-	@docker run -d --rm -it --name fabric-x-committer-test-node \
-		-p 4001:4001 -p 2110:2110 -p 2114:2114 -p 2117:2117 -p 7001:7001 -p 7050:7050 -p 5433:5433 \
-		-v "$(PWD)/testdata/crypto:/root/config/crypto" \
-		-v "$(PWD)/testdata/crypto/sc-genesis-block.proto.bin:/root/config/sc-genesis-block.proto.bin" \
-		-v "$(PWD)/testdata/crypto/sc-genesis-block.proto.bin:/root/artifacts/config-block.pb.bin" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt:/server-certs/public-key.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key:/server-certs/private-key.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt:/server-certs/ca-certificate.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.crt:/client-certs/public-key.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/server.key:/client-certs/private-key.pem" \
-		-v "$(PWD)/testdata/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/tls/ca.crt:/client-certs/ca-certificate.pem" \
-		-e SC_SIDECAR_ORDERER_IDENTITY_MSP_DIR=/root/config/crypto/peerOrganizations/Org1/peers/committer.org1.example.com/msp \
-		-e SC_SIDECAR_ORDERER_IDENTITY_MSP_ID=Org1MSP \
-		-e SC_SIDECAR_ORDERER_CHANNEL_ID=mychannel \
-		-e SC_SIDECAR_ORDERER_SIGNED_ENVELOPES=true \
-		-e SC_QUERY_SERVICE_SERVER_ENDPOINT=:7001 \
+	@docker run -d --rm --name fabric-x-committer-test-node \
+		--add-host coordinator:127.0.0.1 --add-host verifier:127.0.0.1 \
+		--add-host vc:127.0.0.1 --add-host db:127.0.0.1 \
 		-e SC_ORDERER_BLOCK_SIZE=1 \
-		docker.io/hyperledger/fabric-x-committer-test-node:0.1.9 run db orderer committer
-	@while ! nc -z localhost 7001 2>/dev/null; do sleep 1; done
-	@go tool fxconfig namespace create basic --policy="OR('Org1MSP.member', 'Org2MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
-	@go tool fxconfig namespace create two --policy="AND('Org1MSP.member', 'Org2MSP.member')" --endorse --submit --wait --config=testdata/fxconfig.yaml
+		-p 4001:4001 -p 7001:7001 -p 7050:7050 \
+		$(COMMITTER_IMAGE) run db orderer committer
+	@echo "Waiting for the committer to become healthy..."
+	@while ! docker exec fabric-x-committer-test-node /root/bin/healthcheck >/dev/null 2>&1; do sleep 1; done
+	@echo "Creating namespace 'basic'..."
+	@docker run --rm --network container:fabric-x-committer-test-node \
+		-v "$(PWD)/testdata/crypto:/crypto:ro" \
+		-v "$(PWD)/testdata/fxconfig.yaml:/config/fxconfig.yaml:ro" \
+		$(TOOLS_IMAGE) \
+		sh -c "fxconfig namespace list --config=/config/fxconfig.yaml 2>/dev/null | grep -q 'basic' || ( \
+			fxconfig namespace create basic --policy=\"OR('peer-org-0.member', 'peer-org-1.member')\" --output /tmp/tx.json --config=/config/fxconfig.yaml && \
+			fxconfig tx endorse /tmp/tx.json --output /tmp/tx.org0.json --config=/config/fxconfig.yaml && \
+			FXCONFIG_MSP_LOCALMSPID=peer-org-1 FXCONFIG_MSP_CONFIGPATH=/crypto/peerOrganizations/peer-org-1.com/users/client@peer-org-1.com/msp \
+				fxconfig tx endorse /tmp/tx.org0.json --output /tmp/tx.org01.json --config=/config/fxconfig.yaml && \
+			fxconfig tx submit /tmp/tx.org01.json --wait --config=/config/fxconfig.yaml )"
 
 .PHONY: test-x
 test-x:
-	@go test -timeout 30s -run ^TestFabricXCommitter$$ ./integration
+	@go test -timeout 30s -run ^TestFabricXCommitter$$ -count=1 ./integration
 
 .PHONY: stop-x
 stop-x:
@@ -51,6 +68,7 @@ stop-x:
 
 .PHONY: start-fablo
 start-fablo:
+	docker pull hyperledger/fabric-ccenv:3.1.4; docker pull hyperledger/fabric-baseos:3.1.4
 	cd testdata/fablo && ./fablo up
 
 .PHONY: stop-fablo
@@ -59,7 +77,7 @@ stop-fablo:
 
 .PHONY: test-fablo
 test-fablo:
-	@go test -timeout 60s -run ^TestFablo$$ ./integration
+	@go test -timeout 60s -run ^TestFablo$$ -count=1 ./integration
 
 .PHONY: clean-fablo
 clean-fablo:

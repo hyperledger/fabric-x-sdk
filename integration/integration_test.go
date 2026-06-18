@@ -220,35 +220,44 @@ func newFabloSetup(t *testing.T) *testSetup {
 }
 
 // newTestCommitterSetup returns a testSetup pointed at a running Fabric-X test committer.
+//
+// It uses the crypto material embedded in the committer image (extracted into
+// testdata/crypto by `make init-x`): the client@peer-org-0 identity for signing
+// and mTLS. Endpoints are dialled as "localhost" so they match the "localhost"
+// SAN in the committer's server certificates (the mock orderer cert in
+// particular has no 127.0.0.1 SAN).
 func newTestCommitterSetup(t *testing.T) *testSetup {
 	t.Helper()
-	cryptoBase := path.Join("..", "testdata", "crypto", "peerOrganizations", "Org1")
-	committer := path.Join(cryptoBase, "peers", "committer.org1.example.com")
-	user := path.Join(cryptoBase, "users", "User1@org1.example.com")
+	cryptoBase := path.Join("..", "testdata", "crypto")
+	peerOrg := path.Join(cryptoBase, "peerOrganizations", "peer-org-0.com")
+	ordererOrg := path.Join(cryptoBase, "ordererOrganizations", "orderer-org-0.com")
+	user := path.Join(peerOrg, "users", "client@peer-org-0.com")
+	peerTLSCA := path.Join(peerOrg, "msp", "tlscacerts", "tlspeer-org-0-CA-cert.pem")
+	ordererTLSCA := path.Join(ordererOrg, "msp", "tlscacerts", "tlsorderer-org-0-CA-cert.pem")
 
 	cfg := config{
 		Channel:   "mychannel",
 		Namespace: "basic",
 		Orderers: []network.OrdererConf{{
-			Address: "127.0.0.1:7050",
+			Address: "localhost:7050",
 			TLS: network.TLSConfig{
 				Mode:        network.TLSModeMTLS,
 				CertPath:    path.Join(user, "tls", "client.crt"),
 				KeyPath:     path.Join(user, "tls", "client.key"),
-				CACertPaths: []string{path.Join(committer, "tls", "ca.crt")},
+				CACertPaths: []string{ordererTLSCA},
 			},
 		}},
 		Peer: network.PeerConf{
-			Address: "127.0.0.1:4001",
+			Address: "localhost:4001",
 			TLS: network.TLSConfig{
 				Mode:        network.TLSModeMTLS,
 				CertPath:    path.Join(user, "tls", "client.crt"),
 				KeyPath:     path.Join(user, "tls", "client.key"),
-				CACertPaths: []string{path.Join(committer, "tls", "ca.crt")},
+				CACertPaths: []string{peerTLSCA},
 			},
 		},
 		SignerMSPDir: path.Join(user, "msp"),
-		SignerMSPID:  "Org1MSP",
+		SignerMSPID:  "peer-org-0",
 	}
 
 	conn, err := net.DialTimeout("tcp", cfg.Peer.Address, time.Second)

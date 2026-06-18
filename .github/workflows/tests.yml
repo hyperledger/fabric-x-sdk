@@ -35,3 +35,54 @@ jobs:
 
       - name: Run unit tests
         run: make unit-tests
+
+  fabric-x:
+    name: Fabric-X Committer Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Extract committer crypto
+        run: make init-x
+
+      - name: Start committer
+        run: make start-x
+
+      - name: Run Fabric-X committer tests
+        run: make test-x
+
+      - name: Stop committer
+        if: always()
+        run: make stop-x
+
+  fablo:
+    name: Fablo Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start fablo network
+        run: make start-fablo
+
+      - name: Run fablo tests
+        run: make test-fablo
+
+      - name: Stop fablo network
+        if: always()
+        run: make stop-fablo
