@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
-	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/api/msppb"
@@ -122,11 +121,10 @@ func CreateSignedTx(
 	}
 	nsEndorsements := &applicationpb.Endorsements{}
 	for _, end := range endorsements {
-		// Deserialize the endorser identity (format is the same between Fabric and Fabric-X)
-		var endorserIdentity *msppb.Identity
-		var si msp.SerializedIdentity
-		if err := proto.Unmarshal(end.Endorser, &si); err == nil && si.Mspid != "" {
-			endorserIdentity = msppb.NewIdentity(si.Mspid, si.IdBytes)
+		// Deserialize the endorser identity (msppb.Identity from SerializeWithIDOfCert or Serialize)
+		endorserIdentity := &msppb.Identity{}
+		if err := proto.Unmarshal(end.Endorser, endorserIdentity); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal endorser identity: %w", err)
 		}
 		nsEndorsements.EndorsementsWithIdentity = append(nsEndorsements.EndorsementsWithIdentity,
 			&applicationpb.EndorsementWithIdentity{
