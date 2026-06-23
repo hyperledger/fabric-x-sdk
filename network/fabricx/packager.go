@@ -155,11 +155,13 @@ func CreateSignedTx(
 		return nil, err
 	}
 
+	shdr.Creator = nil
+
 	// create the payload
 	payl := &common.Payload{
 		Header: &common.Header{
 			ChannelHeader:   chdrBytes,
-			SignatureHeader: hdr.SignatureHeader,
+			SignatureHeader: protoutil.MarshalOrPanic(shdr),
 		},
 		Data: txBytes,
 	}
@@ -168,14 +170,8 @@ func CreateSignedTx(
 		return nil, err
 	}
 
-	// sign the payload
-	sig, err := signer.Sign(paylBytes)
-	if err != nil {
-		return nil, err
-	}
-
 	// here's the envelope
-	return &common.Envelope{Payload: paylBytes, Signature: sig}, nil
+	return &common.Envelope{Payload: paylBytes}, nil
 }
 
 // NewSubmitter is a convenience constructor that wires together a Fabric-X TxPackager
