@@ -25,35 +25,24 @@ import (
 )
 
 // NewTxPackager returns a TxPackager that assembles Fabric-X transaction envelopes.
-func NewTxPackager(s sdk.Signer) TxPackager {
-	return TxPackager{
-		signer: s,
-	}
+func NewTxPackager() TxPackager {
+	return TxPackager{}
 }
 
-// TxPackager assembles a signed Fabric-X transaction envelope from an endorsement.
-type TxPackager struct {
-	signer sdk.Signer
-}
+// TxPackager assembles a Fabric-X transaction envelope from an endorsement.
+type TxPackager struct{}
 
-// PackageTx combines the proposal and endorser responses into a signed Fabric-X envelope.
+// PackageTx combines the proposal and endorser responses into a Fabric-X envelope.
 func (p TxPackager) PackageTx(end sdk.Endorsement) (*common.Envelope, error) {
-	return CreateSignedTx(end.Proposal, p.signer, end.Responses...)
+	return CreateTx(end.Proposal, end.Responses...)
 }
 
-// CreateSignedTx is an adaptation of protoutil.CreateSignedTx,
-// tweaked to work with Fabric-X payloads and signature schemes.
-func CreateSignedTx(
-	proposal *peer.Proposal,
-	signer sdk.Signer,
-	resps ...*peer.ProposalResponse,
-) (*common.Envelope, error) {
+// CreateTx is an adaptation of protoutil.CreateSignedTx,
+// tweaked to work with Fabric-X payloads. Fabric-X does not require the
+// submitting client to sign the envelope, so no signer is involved.
+func CreateTx(proposal *peer.Proposal, resps ...*peer.ProposalResponse) (*common.Envelope, error) {
 	if len(resps) == 0 {
 		return nil, errors.New("at least one proposal response is required")
-	}
-
-	if signer == nil {
-		return nil, errors.New("signer is required when creating a signed transaction")
 	}
 
 	// the original header
@@ -62,19 +51,9 @@ func CreateSignedTx(
 		return nil, err
 	}
 
-	// check that the signer is the same that is referenced in the header
-	signerBytes, err := signer.Serialize()
-	if err != nil {
-		return nil, err
-	}
-
 	shdr, err := protoutil.UnmarshalSignatureHeader(hdr.SignatureHeader)
 	if err != nil {
 		return nil, err
-	}
-
-	if !bytes.Equal(signerBytes, shdr.Creator) {
-		return nil, errors.New("signer must be the same as the one referenced in the header")
 	}
 
 	// ensure that all actions are bitwise equal and that they are successful
@@ -174,6 +153,6 @@ func CreateSignedTx(
 
 // NewSubmitter is a convenience constructor that wires together a Fabric-X TxPackager
 // and a FabricSubmitter for Fabric-X orderers.
-func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
-	return network.NewSubmitter(ctx, orderers, NewTxPackager(s), waitAfterSubmit, logger)
+func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
+	return network.NewSubmitter(ctx, orderers, NewTxPackager(), waitAfterSubmit, logger)
 }
