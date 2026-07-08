@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/protoutil"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfabx "github.com/hyperledger/fabric-x-sdk/blocks/fabricx"
@@ -366,13 +365,9 @@ func waitUntilSynced(t *testing.T, sync *network.Synchronizer, timeout time.Dura
 }
 
 func (s *testSetup) endorseAndSubmit(ctx context.Context, rws blocks.ReadWriteSet) error {
-	signedProp, err := network.NewSignedProposal(s.signer, s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, [][]byte{[]byte("invoke")})
 	if err != nil {
-		return fmt.Errorf("NewSignedProposal: %w", err)
-	}
-	inv, err := endorsement.Parse(signedProp, time.Time{})
-	if err != nil {
-		return fmt.Errorf("endorsement.Parse: %w", err)
+		return fmt.Errorf("NewInvocation: %w", err)
 	}
 	result := endorsement.Success(rws, nil, nil)
 	var responses []*peer.ProposalResponse
@@ -391,13 +386,9 @@ func (s *testSetup) endorseAndSubmit(ctx context.Context, rws blocks.ReadWriteSe
 // and returns the combined sdk.Endorsement (one response per builder).
 func (s *testSetup) endorse(t *testing.T, endr *localEndorser, args [][]byte) sdk.Endorsement {
 	t.Helper()
-	prop, err := network.NewSignedProposal(s.signer, s.channel, s.namespace, "1.0", args)
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, args)
 	if err != nil {
-		t.Fatalf("NewSignedProposal: %v", err)
-	}
-	inv, err := endorsement.Parse(prop, time.Time{})
-	if err != nil {
-		t.Fatalf("endorsement.Parse: %v", err)
+		t.Fatalf("NewInvocation: %v", err)
 	}
 	result := endr.result(inv)
 	var responses []*peer.ProposalResponse
@@ -408,11 +399,7 @@ func (s *testSetup) endorse(t *testing.T, endr *localEndorser, args [][]byte) sd
 		}
 		responses = append(responses, resp)
 	}
-	proposal, err := protoutil.UnmarshalProposal(prop.ProposalBytes)
-	if err != nil {
-		t.Fatalf("UnmarshalProposal: %v", err)
-	}
-	return sdk.Endorsement{Proposal: proposal, Responses: responses}
+	return sdk.Endorsement{Proposal: inv.Proposal, Responses: responses}
 }
 
 // waitForKeyValue polls until the key has the given value in the local DB.

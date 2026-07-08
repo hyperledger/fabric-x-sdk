@@ -9,17 +9,14 @@ package network
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"math"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-x-common/protoutil"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -33,8 +30,7 @@ import (
 // Use the protocol-specific constructors in network/fabric or network/fabricx for a
 // higher-level API that pre-binds a channel and signer.
 type Peer struct {
-	conn   *grpc.ClientConn
-	client peer.EndorserClient
+	conn *grpc.ClientConn
 }
 
 // NewPeer dials the peer at the address in conf and returns a client.
@@ -69,25 +65,7 @@ func NewPeer(c PeerConf) (*Peer, error) {
 		return nil, fmt.Errorf("dial peer %s: %w", c.Address, err)
 	}
 
-	return &Peer{
-		conn:   conn,
-		client: peer.NewEndorserClient(conn),
-	}, nil
-}
-
-// ProcessProposal sends a proposal to the peer and returns the response.
-// All non-nil responses are returned as-is regardless of status code — a 400
-// or 500 is a valid signed reply from the endorser and the caller decides how
-// to handle it. Only a nil Response field (malformed reply) is treated as an error.
-func (p *Peer) ProcessProposal(ctx context.Context, signedProp *peer.SignedProposal) (*peer.ProposalResponse, error) {
-	resp, err := p.client.ProcessProposal(ctx, signedProp)
-	if err != nil {
-		return nil, fmt.Errorf("peer: %w", err)
-	}
-	if resp.Response == nil {
-		return nil, fmt.Errorf("peer returned nil response")
-	}
-	return resp, nil
+	return &Peer{conn: conn}, nil
 }
 
 // BlockProcessor processes a single block.
@@ -148,121 +126,10 @@ func (p *Peer) Close() error {
 	return p.conn.Close()
 }
 
-// PeerConf tells the EndorsementClient or Synchronizer how to reach a peer.
+// PeerConf tells the Synchronizer how to reach a peer.
 type PeerConf struct {
 	Address string
 	TLS     TLSConfig
-}
-
-// EndorsementClient sends a proposal to one or more peers in parallel and collects
-// their signed responses into an sdk.Endorsement.
-type EndorsementClient struct {
-	peers   []*Peer
-	signer  sdk.Signer
-	channel string
-}
-
-// NewEndorsementClient dials all configured peers and returns a client ready to endorse transactions.
-func NewEndorsementClient(config []PeerConf, signer sdk.Signer, channel, namespace, nsVersion string) (*EndorsementClient, error) {
-	if len(config) == 0 {
-		return nil, fmt.Errorf("no peers configured")
-	}
-	peers := make([]*Peer, len(config))
-	for i, c := range config {
-		var err error
-		peers[i], err = NewPeer(c)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return &EndorsementClient{
-		peers:   peers,
-		signer:  signer,
-		channel: channel,
-	}, nil
-}
-
-// ExecuteTransaction sends args to all configured peers in parallel, collects their
-// responses, and returns an sdk.Endorsement. Returns an error if any peer fails.
-func (ec *EndorsementClient) ExecuteTransaction(ctx context.Context, namespace, nsVersion string, args [][]byte) (sdk.Endorsement, error) {
-	prop, err := NewSignedProposal(ec.signer, ec.channel, namespace, nsVersion, args)
-	if err != nil {
-		return sdk.Endorsement{}, err
-	}
-
-	type result struct {
-		resp *peer.ProposalResponse
-		err  error
-	}
-	results := make([]result, len(ec.peers))
-	var wg sync.WaitGroup
-	for i, p := range ec.peers {
-		wg.Go(func() {
-			resp, err := p.ProcessProposal(ctx, prop)
-			results[i] = result{resp, err}
-		})
-	}
-	wg.Wait()
-
-	responses := make([]*peer.ProposalResponse, 0, len(ec.peers))
-	for _, r := range results {
-		if r.err != nil {
-			return sdk.Endorsement{}, fmt.Errorf("peer endorsement: %w", r.err)
-		}
-		responses = append(responses, r.resp)
-	}
-
-	proposal, err := protoutil.UnmarshalProposal(prop.ProposalBytes)
-	if err != nil {
-		return sdk.Endorsement{}, err
-	}
-	return sdk.Endorsement{Proposal: proposal, Responses: responses}, nil
-}
-
-// Close closes all peer connections.
-func (ec *EndorsementClient) Close() error {
-	var errs []error
-	for _, p := range ec.peers {
-		if err := p.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// NewSignedProposal creates a new proposal to be submitted to a peer or endorser.
-func NewSignedProposal(signer sdk.Signer, channel, namespace, nsVersion string, args [][]byte) (*peer.SignedProposal, error) {
-	creator, err := signer.Serialize()
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := mustNonce()
-	proposal, _, err := protoutil.CreateChaincodeProposalWithTxIDNonceAndTransient(
-		protoutil.ComputeTxID(nonce, creator),
-		common.HeaderType_ENDORSER_TRANSACTION,
-		channel,
-		&peer.ChaincodeInvocationSpec{
-			ChaincodeSpec: &peer.ChaincodeSpec{
-				Type: peer.ChaincodeSpec_CAR, // FIXME: should we put some special value here?
-				ChaincodeId: &peer.ChaincodeID{
-					Name:    namespace,
-					Version: nsVersion,
-				},
-				Input: &peer.ChaincodeInput{
-					Args: args,
-				},
-			},
-		},
-		nonce,
-		creator,
-		nil,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return protoutil.GetSignedProposal(proposal, signer)
 }
 
 // newDeliverSeekInfo returns a signed envelope that can be used to subscribe to a peer
