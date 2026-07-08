@@ -60,6 +60,10 @@ func NewPeer(c PeerConf) (*Peer, error) {
 			Backoff:           backoff.DefaultConfig,
 			MinConnectTimeout: 10 * time.Second,
 		}),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(100*1024*1024), // 100 MB
+			grpc.MaxCallSendMsgSize(100*1024*1024), // 100 MB
+		),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dial peer %s: %w", c.Address, err)

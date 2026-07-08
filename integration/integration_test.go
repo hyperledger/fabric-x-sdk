@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-common/api/msppb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	bfabx "github.com/hyperledger/fabric-x-sdk/blocks/fabricx"
@@ -35,6 +36,7 @@ import (
 	nfabx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/state"
 	"google.golang.org/grpc/grpclog"
+	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite"
 )
 
@@ -322,7 +324,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		if err != nil {
 			t.Fatalf("NewSynchronizer: %v", err)
 		}
-		submitter, err = nfabx.NewSubmitter(t.Context(), cfg.Orderers, signer, 0, log)
+		submitter, err = nfabx.NewSubmitter(t.Context(), cfg.Orderers, 0, log)
 	}
 	if err != nil {
 		t.Fatalf("NewSubmitter: %v", err)
@@ -475,7 +477,13 @@ func (s *testSetup) newSimStore(t *testing.T, blockNum uint64) *state.Simulation
 type testSigner struct{}
 
 func (testSigner) Sign(_ []byte) ([]byte, error) { return []byte("sig"), nil }
-func (testSigner) Serialize() ([]byte, error)    { return []byte("identity"), nil }
+
+// Serialize returns a valid msppb.Identity so the Fabric-X packager, which
+// decodes the endorser identity as msppb.Identity, can parse it. This mirrors
+// the real identity.Signer, whose msp.SerializedIdentity is wire-compatible.
+func (testSigner) Serialize() ([]byte, error) {
+	return proto.Marshal(msppb.NewIdentity("SampleOrg", []byte("identity")))
+}
 
 // --- local endorser ---
 
