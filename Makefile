@@ -12,9 +12,9 @@ unit-tests:
 # (peer-org-0 / orderer-org-0), genesis/config block and per-service configs,
 # all wired together with mTLS. We use those embedded configs as-is and only
 # override a few keys via environment variables.
-COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.3
+COMMITTER_IMAGE ?= docker.io/hyperledger/fabric-x-committer-test-node:1.0.4
 # fxconfig (namespace administration) ships in the fabric-x tools image.
-TOOLS_IMAGE ?= docker.io/hyperledger/fabric-x-tools:1.0.0
+TOOLS_IMAGE ?= docker.io/hyperledger/fabric-x-tools:1.0.1
 
 # init-x extracts the crypto material embedded in the committer image so the
 # integration test and fxconfig can use the same identities the committer trusts.
