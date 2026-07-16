@@ -328,7 +328,7 @@ func testAddLog(t *testing.T, s *testSetup) {
 		t.Fatalf("marshal logs: %v", err)
 	}
 
-	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, [][]byte{[]byte("invoke")})
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}
@@ -391,7 +391,7 @@ func testInputArgsAndEvents(t *testing.T, s *testSetup) {
 	args := [][]byte{[]byte("invoke"), []byte("arg1"), []byte("arg2")}
 	eventPayload := []byte(`{"type":"Transfer"}`)
 
-	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, args)
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, "1.0", args)
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}
@@ -451,7 +451,7 @@ func testNotifications(t *testing.T, s *testSetup) {
 	key := t.Name() + "/" + rand.Text()
 
 	// Build the endorsement in scope so we can access inv.TxID before submitting.
-	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, [][]byte{[]byte("invoke")})
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}
