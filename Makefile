@@ -6,7 +6,7 @@ checks:
 
 .PHONY: unit-tests
 unit-tests:
-	go test ./... -short
+	go test ./... -short -race
 
 # The committer test node is self-contained: it ships its own crypto material
 # (peer-org-0 / orderer-org-0), genesis/config block and per-service configs,

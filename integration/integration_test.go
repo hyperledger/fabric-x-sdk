@@ -40,6 +40,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func init() {
+	// Silence gRPC logging once, before any test starts a gRPC server: setting the
+	// global logger after servers are already running races with their internal
+	// logging goroutines.
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr))
+}
+
 // --- backends ---
 
 func TestFabric(t *testing.T) {
@@ -275,7 +282,6 @@ func newTestCommitterSetup(t *testing.T) *testSetup {
 func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	t.Helper()
 	log := sdk.NewTestLogger(t, networkType)
-	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, os.Stderr, os.Stderr)) // silence GRPC logging
 
 	var signer sdk.Signer
 	var err error
@@ -367,7 +373,7 @@ func waitUntilSynced(t *testing.T, sync *network.Synchronizer, timeout time.Dura
 }
 
 func (s *testSetup) endorseAndSubmit(ctx context.Context, rws blocks.ReadWriteSet) error {
-	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, [][]byte{[]byte("invoke")})
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
 	if err != nil {
 		return fmt.Errorf("NewInvocation: %w", err)
 	}
@@ -388,7 +394,7 @@ func (s *testSetup) endorseAndSubmit(ctx context.Context, rws blocks.ReadWriteSe
 // and returns the combined sdk.Endorsement (one response per builder).
 func (s *testSetup) endorse(t *testing.T, endr *localEndorser, args [][]byte) sdk.Endorsement {
 	t.Helper()
-	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, args)
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, "1.0", args)
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}

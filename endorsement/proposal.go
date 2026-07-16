@@ -87,8 +87,10 @@ func Success(rws blocks.ReadWriteSet, event []byte, payload []byte) ExecutionRes
 	}
 }
 
-// NewInvocation creates an Invocation directly from a signer, channel, namespace and args.
-func NewInvocation(signer sdk.Signer, channel, namespace string, args [][]byte) (Invocation, error) {
+// NewInvocation creates an Invocation directly from a signer, channel, namespace, chaincode
+// version and args. For Fabric, nsVersion must match the namespace's approved chaincode version,
+// or the peer rejects the resulting proposal as INVALID_CHAINCODE.
+func NewInvocation(signer sdk.Signer, channel, namespace, nsVersion string, args [][]byte) (Invocation, error) {
 	creator, err := signer.Serialize()
 	if err != nil {
 		return Invocation{}, err
@@ -102,7 +104,7 @@ func NewInvocation(signer sdk.Signer, channel, namespace string, args [][]byte) 
 	}
 
 	txID := protoutil.ComputeTxID(nonce, creator)
-	ccid := &peer.ChaincodeID{Name: namespace, Version: "1.0"}
+	ccid := &peer.ChaincodeID{Name: namespace, Version: nsVersion}
 	proposal, _, err := protoutil.CreateChaincodeProposalWithTxIDNonceAndTransient(
 		txID,
 		common.HeaderType_ENDORSER_TRANSACTION,
@@ -201,8 +203,8 @@ func Parse(signedProp *peer.SignedProposal, expectedTime time.Time) (Invocation,
 	if !expectedTime.IsZero() {
 		timestamp := time.Unix(chdr.Timestamp.Seconds, int64(chdr.Timestamp.Nanos))
 		// Allow 10 minute window (5 min past, 5 min future) to account for clock skew
-		if timestamp.Before(timestamp.Add(-5*time.Minute)) || timestamp.After(timestamp.Add(5*time.Minute)) {
-			return Invocation{}, fmt.Errorf("proposal timestamp %v outside valid window (now: %v)", timestamp, timestamp)
+		if timestamp.Before(expectedTime.Add(-5*time.Minute)) || timestamp.After(expectedTime.Add(5*time.Minute)) {
+			return Invocation{}, fmt.Errorf("proposal timestamp %v outside valid window (expected: %v)", timestamp, expectedTime)
 		}
 	}
 
