@@ -6,7 +6,7 @@ checks:
 
 .PHONY: unit-tests
 unit-tests:
-	go test ./... -short -race
+	go test ./... -short -race -coverprofile=coverage.out -covermode=atomic
 
 # The committer test node is self-contained: it ships its own crypto material
 # (peer-org-0 / orderer-org-0), genesis/config block and per-service configs,
