@@ -166,21 +166,69 @@ func toProtoStreamAllRequest(req *notification.StreamAllRequest) *committerpb.St
 	}
 	return &committerpb.StreamAllRequest{
 		FilterNamespaces:     req.FilterNamespaces,
-		FilterStatus:         req.FilterStatus,
+		FilterStatus:         toProtoFilterStatus(req.FilterStatus),
 		IncludeReadWriteSets: req.IncludeReadWriteSets,
 		IncludeEndorsements:  req.IncludeEndorsements,
 		IncludeMetadata:      req.IncludeMetadata,
 	}
 }
 
+// statusFromProto maps a Fabric-X sidecar status onto the protocol-neutral
+// notification.Status, preserving the original code's name as the reason string.
+func statusFromProto(s committerpb.Status) (notification.Status, string) {
+	switch s {
+	case committerpb.Status_COMMITTED:
+		return notification.StatusCommitted, s.String()
+	case committerpb.Status_STATUS_UNSPECIFIED:
+		return notification.StatusUnknown, s.String()
+	case committerpb.Status_ABORTED_SIGNATURE_INVALID, committerpb.Status_ABORTED_MVCC_CONFLICT:
+		return notification.StatusInvalid, s.String()
+	default:
+		// REJECTED_* and the MALFORMED_* family: rejected before validation.
+		return notification.StatusRejected, s.String()
+	}
+}
+
+// toProtoFilterStatus expands the coarse, protocol-neutral filter statuses into
+// the concrete sidecar status codes they cover.
+func toProtoFilterStatus(statuses []notification.Status) []committerpb.Status {
+	if len(statuses) == 0 {
+		return nil
+	}
+	var out []committerpb.Status
+	for _, s := range statuses {
+		switch s {
+		case notification.StatusCommitted:
+			out = append(out, committerpb.Status_COMMITTED)
+		case notification.StatusInvalid:
+			out = append(out,
+				committerpb.Status_ABORTED_SIGNATURE_INVALID,
+				committerpb.Status_ABORTED_MVCC_CONFLICT)
+		case notification.StatusRejected:
+			// Sidecar codes >= 100 are pre-validation rejections: a duplicate
+			// transaction ID and the MALFORMED_* family.
+			for code := range committerpb.Status_name {
+				if code >= 100 {
+					out = append(out, committerpb.Status(code))
+				}
+			}
+		case notification.StatusUnknown:
+			out = append(out, committerpb.Status_STATUS_UNSPECIFIED)
+		}
+	}
+	return out
+}
+
 func convertTxEventBatch(batch *committerpb.TxEventBatch) notification.AllTxBatch {
 	events := make([]notification.CommittedTxEvent, len(batch.Events))
 	for i, e := range batch.Events {
+		status, reason := statusFromProto(e.Status)
 		events[i] = notification.CommittedTxEvent{
 			TxID:         e.Ref.GetTxId(),
 			BlockNum:     e.Ref.GetBlockNum(),
 			TxNum:        e.Ref.GetTxNum(),
-			Status:       e.Status,
+			Status:       status,
+			Reason:       reason,
 			Namespaces:   e.Namespaces,
 			Endorsements: e.Endorsements,
 			Metadata:     e.Metadata,
@@ -189,20 +237,28 @@ func convertTxEventBatch(batch *committerpb.TxEventBatch) notification.AllTxBatc
 	return notification.AllTxBatch{BlockNumber: batch.BlockNumber, Events: events}
 }
 
-func convertNotificationResponse(res *committerpb.NotificationResponse) []notification.TxStatusEvent {
-	var events []notification.TxStatusEvent
-	for _, txStatus := range res.TxStatusEvents {
+// convertTxStatuses maps sidecar TxStatus records onto neutral TxStatusEvents.
+func convertTxStatuses(statuses []*committerpb.TxStatus) []notification.TxStatusEvent {
+	events := make([]notification.TxStatusEvent, 0, len(statuses))
+	for _, s := range statuses {
+		status, reason := statusFromProto(s.Status)
 		events = append(events, notification.TxStatusEvent{
-			TxID:     txStatus.Ref.TxId,
-			BlockNum: txStatus.Ref.BlockNum,
-			TxNum:    txStatus.Ref.TxNum,
-			Status:   txStatus.Status,
+			TxID:     s.Ref.GetTxId(),
+			BlockNum: s.Ref.GetBlockNum(),
+			TxNum:    s.Ref.GetTxNum(),
+			Status:   status,
+			Reason:   reason,
 		})
 	}
+	return events
+}
+
+func convertNotificationResponse(res *committerpb.NotificationResponse) []notification.TxStatusEvent {
+	events := convertTxStatuses(res.TxStatusEvents)
 	for _, txID := range res.TimeoutTxIds {
 		events = append(events, notification.TxStatusEvent{
 			TxID:   txID,
-			Status: committerpb.Status_STATUS_UNSPECIFIED,
+			Status: notification.StatusUnknown,
 		})
 	}
 	// Note: RejectedTxIds field was added in a later version of fabric-x-common.
