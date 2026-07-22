@@ -34,7 +34,7 @@ func (p TxPackager) PackageTx(end sdk.Endorsement) (*common.Envelope, error) {
 }
 
 // NewSubmitter is a convenience constructor that wires together a Fabric TxPackager
-// and a FabricSubmitter for classic Fabric orderers.
-func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
+// and a Submitter for classic Fabric orderers.
+func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, s sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.Submitter, error) {
 	return network.NewSubmitter(ctx, orderers, NewTxPackager(s), waitAfterSubmit, logger)
 }

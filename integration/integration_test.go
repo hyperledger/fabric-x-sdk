@@ -129,7 +129,7 @@ type testSetup struct {
 	monotonicVersions     bool
 	signer                sdk.Signer
 	builders              []endorsement.Builder
-	submitter             *network.FabricSubmitter
+	submitter             *network.Submitter
 	capture               *captureHandler
 	peer                  *nfabx.Peer // non-nil only for fabric-x
 	supportsNotifications bool        // true only for the real Fabric-X committer
@@ -304,7 +304,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	capture := &captureHandler{}
 
 	var builder endorsement.Builder
-	var submitter *network.FabricSubmitter
+	var submitter *network.Submitter
 	var sync *network.Synchronizer
 	var fxPeer *nfabx.Peer
 	switch networkType {

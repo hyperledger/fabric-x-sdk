@@ -152,7 +152,7 @@ func CreateTx(proposal *peer.Proposal, resps ...*peer.ProposalResponse) (*common
 }
 
 // NewSubmitter is a convenience constructor that wires together a Fabric-X TxPackager
-// and a FabricSubmitter for Fabric-X orderers.
-func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.FabricSubmitter, error) {
+// and a Submitter for Fabric-X orderers.
+func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.Submitter, error) {
 	return network.NewSubmitter(ctx, orderers, NewTxPackager(), waitAfterSubmit, logger)
 }
