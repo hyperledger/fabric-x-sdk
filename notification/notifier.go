@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 )
 
@@ -65,20 +64,18 @@ type NotificationPeer interface {
 
 // Notifier manages subscriptions to the Fabric-X Notification Service.
 // It delegates the gRPC stream to a NotificationPeer (typically a fabricx.Peer),
-// pre-binding the processor and timeout for each Subscribe call.
+// pre-binding the processor for each Subscribe call.
 type Notifier struct {
-	peer           NotificationPeer
-	processor      *Processor
-	defaultTimeout time.Duration
+	peer      NotificationPeer
+	processor *Processor
 }
 
 // NewNotifier creates a new Notifier that subscribes for transaction status events
 // via the given peer's notification stream.
 func NewNotifier(peer NotificationPeer, processor *Processor) *Notifier {
 	return &Notifier{
-		peer:           peer,
-		processor:      processor,
-		defaultTimeout: 3 * time.Minute,
+		peer:      peer,
+		processor: processor,
 	}
 }
 
@@ -90,12 +87,8 @@ func NewNotifier(peer NotificationPeer, processor *Processor) *Notifier {
 // Best practice: start Subscribe BEFORE submitting transactions to avoid
 // missing notifications if transactions complete quickly.
 func (n *Notifier) Subscribe(ctx context.Context, txIDs <-chan []string) error {
-	return n.peer.Notify(ctx, txIDs, n.processor, n.defaultTimeout)
-}
-
-// SetDefaultTimeout changes the default timeout for future subscription requests.
-func (n *Notifier) SetDefaultTimeout(timeout time.Duration) {
-	n.defaultTimeout = timeout
+	// A zero timeout tells the committer to apply its own configured default.
+	return n.peer.Notify(ctx, txIDs, n.processor, 0)
 }
 
 // TxStatusEvent represents a transaction status notification from the
@@ -104,17 +97,22 @@ type TxStatusEvent struct {
 	TxID     string
 	BlockNum uint64
 	TxNum    uint32
-	Status   committerpb.Status
+	Status   Status
+	Reason   string
 }
 
 // Valid returns true if the transaction was committed successfully.
 func (e TxStatusEvent) Valid() bool {
-	return e.Status == committerpb.Status_COMMITTED
+	return e.Status == StatusCommitted
 }
 
 // TxStatusHandler processes batches of transaction status events.
 // Handlers are invoked sequentially for each batch of events received
 // from the notification service.
+//
+// Handle runs on the stream's single receive goroutine and must not block:
+// slow work stalls the loop and delays notifications for all other
+// transactions. Offload anything slow to your own goroutine or queue.
 type TxStatusHandler interface {
 	Handle(ctx context.Context, events []TxStatusEvent) error
 }

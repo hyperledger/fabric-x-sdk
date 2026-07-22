@@ -10,7 +10,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/notification"
 )
@@ -38,13 +37,13 @@ func TestProcessor(t *testing.T) {
 			TxID:     "tx1",
 			BlockNum: 1,
 			TxNum:    0,
-			Status:   committerpb.Status_COMMITTED,
+			Status:   notification.StatusCommitted,
 		},
 		{
 			TxID:     "tx2",
 			BlockNum: 1,
 			TxNum:    1,
-			Status:   committerpb.Status_ABORTED_MVCC_CONFLICT,
+			Status:   notification.StatusInvalid,
 		},
 	}
 
@@ -109,7 +108,7 @@ func TestProcessorMultipleHandlers(t *testing.T) {
 			TxID:     "tx1",
 			BlockNum: 1,
 			TxNum:    0,
-			Status:   committerpb.Status_COMMITTED,
+			Status:   notification.StatusCommitted,
 		},
 	}
 
