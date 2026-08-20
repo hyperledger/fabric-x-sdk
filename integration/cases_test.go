@@ -43,6 +43,7 @@ var cases = []testCase{
 	{"BadRequestEndorsement", testBadRequestEndorsement},
 	{"InputArgsAndEvents", testInputArgsAndEvents},
 	{"Notifications", testNotifications},
+	{"StreamAllTransactions", testStreamAllTransactions},
 }
 
 // runAll executes every case as a subtest against s.
@@ -515,6 +516,90 @@ func (c *txStatusCapture) Handle(_ context.Context, events []notification.TxStat
 		default:
 		}
 	}
+	return nil
+}
+
+// testStreamAllTransactions exercises the Fabric-X Notifier's StreamAllTransactions
+// RPC (as opposed to testNotifications, which exercises OpenNotificationStream).
+// Unlike OpenNotificationStream, fabrictest implements this RPC, so it runs against
+// every fabric-x backend rather than being gated on s.supportsNotifications.
+func testStreamAllTransactions(t *testing.T, s *testSetup) {
+	if s.peer == nil {
+		t.Skip("StreamAllTransactions requires a fabric-x peer")
+	}
+
+	key := t.Name() + "/" + rand.Text()
+	args := [][]byte{[]byte("invoke"), []byte("arg1")}
+
+	inv, err := endorsement.NewInvocation(s.signer, s.channel, s.namespace, "1.0", args)
+	if err != nil {
+		t.Fatalf("NewInvocation: %v", err)
+	}
+	var responses []*peer.ProposalResponse
+	for _, b := range s.builders {
+		resp, err := b.Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
+			Writes: []blocks.KVWrite{{Key: key, Value: []byte("streamed")}},
+		}, nil, nil))
+		if err != nil {
+			t.Fatalf("Endorse: %v", err)
+		}
+		responses = append(responses, resp)
+	}
+	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: responses}
+
+	received := make(chan notification.AllTxBatch, 10)
+	streamer := notification.NewAllTxStreamer(s.peer, []notification.AllTxHandler{&allTxCapture{batches: received}}, sdk.NewTestLogger(t, "alltx"))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	go func() {
+		if err := streamer.Stream(ctx, &notification.StreamAllRequest{
+			FilterNamespaces:     []string{s.namespace},
+			IncludeReadWriteSets: true,
+			IncludeMetadata:      true,
+		}); err != nil && ctx.Err() == nil {
+			t.Errorf("stream: %v", err)
+		}
+	}()
+	// StreamAllTransactions is a real-time feed with no subscribe ack; give the
+	// server a moment to register the subscription before submitting.
+	time.Sleep(200 * time.Millisecond)
+
+	if err := s.submitter.Submit(t.Context(), end); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	for {
+		select {
+		case batch := <-received:
+			for _, e := range batch.Events {
+				if e.TxID != inv.TxID {
+					continue // events from unrelated blocks sharing the namespace filter
+				}
+				if !e.Valid() {
+					t.Errorf("expected COMMITTED, got status %v", e.Status)
+				}
+				if len(e.Namespaces) == 0 {
+					t.Errorf("expected namespaces to be populated (include_read_write_sets)")
+				}
+				if len(e.Metadata) == 0 {
+					t.Errorf("expected metadata to be populated (include_metadata)")
+				}
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for notification batch")
+		}
+	}
+}
+
+type allTxCapture struct {
+	batches chan notification.AllTxBatch
+}
+
+func (c *allTxCapture) HandleBatch(_ context.Context, batch notification.AllTxBatch) error {
+	c.batches <- batch
 	return nil
 }
 

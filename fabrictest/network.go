@@ -109,6 +109,7 @@ func Start(ctx context.Context, namespace, networkType string, cfg Config, db1 b
 	peer.RegisterDeliverServer(n.pSrv, testPeer)
 	peer.RegisterEndorserServer(n.pSrv, testPeer)
 	committerpb.RegisterBlockQueryServiceServer(n.pSrv, testPeer)
+	committerpb.RegisterNotifierServer(n.pSrv, testPeer)
 
 	go n.oSrv.Serve(ordererLis)
 	go n.pSrv.Serve(peerLis)

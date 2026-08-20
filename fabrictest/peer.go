@@ -14,6 +14,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
@@ -34,6 +35,7 @@ type testPeer struct {
 	ledger  *ledger
 	builder endorsement.Builder
 	committerpb.UnimplementedBlockQueryServiceServer
+	committerpb.UnimplementedNotifierServer
 }
 
 // parseStartBlock extracts the requested start block number from the seek envelope.
@@ -175,6 +177,133 @@ func (p *testPeer) GetBlockByTxID(ctx context.Context, req *committerpb.TxID) (*
 // GetTxByID implements the Dabric-X BlockQueryService for getting a transaction by ID
 func (p *testPeer) GetTxByID(ctx context.Context, req *committerpb.TxID) (*common.Envelope, error) {
 	return nil, errors.New("GetTxByID not implemented in fabrictest")
+}
+
+// StreamAllTransactions implements the Fabric-X Notifier service: it streams a
+// TxEventBatch for every block committed after subscription, honoring
+// StreamAllRequest's namespace (OR match) and status filters as well as the
+// include_* flags. Like the real committer's Notifier, this is a real-time feed
+// with no historical replay.
+//
+// Transactions are decoded as Fabric-X applicationpb.Tx; blocks from a "fabric"
+// (classic) fabrictest network use a different channel header type and are
+// naturally skipped rather than misinterpreted.
+func (p *testPeer) StreamAllTransactions(req *committerpb.StreamAllRequest, stream committerpb.Notifier_StreamAllTransactionsServer) error {
+	_, sub := p.ledger.subscribe()
+
+	for block := range sub {
+		batch := buildTxEventBatch(block, req)
+		if batch == nil {
+			continue
+		}
+		if err := stream.Send(batch); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// buildTxEventBatch decodes block into a TxEventBatch filtered per req.
+// It returns nil if the block has no events matching the filters.
+func buildTxEventBatch(block *common.Block, req *committerpb.StreamAllRequest) *committerpb.TxEventBatch {
+	if len(block.Metadata.Metadata) <= int(common.BlockMetadataIndex_TRANSACTIONS_FILTER) {
+		return nil
+	}
+	txFilter := block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER]
+
+	var events []*committerpb.TxEvent
+	for txNum, envBytes := range block.Data.Data {
+		env := &common.Envelope{}
+		if err := proto.Unmarshal(envBytes, env); err != nil {
+			continue
+		}
+		pl := &common.Payload{}
+		if err := proto.Unmarshal(env.Payload, pl); err != nil {
+			continue
+		}
+		chdr := &common.ChannelHeader{}
+		if err := proto.Unmarshal(pl.Header.ChannelHeader, chdr); err != nil {
+			continue
+		}
+		if chdr.Type != int32(common.HeaderType_MESSAGE) {
+			continue // config transaction, or a non-Fabric-X (classic fabric) transaction
+		}
+		ptx := &applicationpb.Tx{}
+		if err := proto.Unmarshal(pl.Data, ptx); err != nil {
+			continue
+		}
+
+		status := committerpb.Status_STATUS_UNSPECIFIED
+		if txNum < len(txFilter) {
+			status = committerpb.Status(txFilter[txNum])
+		}
+		if !statusMatches(status, req.FilterStatus) {
+			continue
+		}
+
+		namespaces, touched := filterNamespaces(ptx.Namespaces, req.FilterNamespaces)
+		if !touched {
+			continue
+		}
+
+		event := &committerpb.TxEvent{
+			Ref: &committerpb.TxRef{
+				BlockNum: block.Header.Number,
+				TxNum:    uint32(txNum),
+				TxId:     chdr.TxId,
+			},
+			Status: status,
+		}
+		if req.IncludeReadWriteSets {
+			event.Namespaces = namespaces
+		}
+		if req.IncludeEndorsements {
+			event.Endorsements = ptx.Endorsements
+		}
+		if req.IncludeMetadata {
+			event.Metadata = ptx.Metadata
+		}
+
+		events = append(events, event)
+	}
+
+	if len(events) == 0 {
+		return nil
+	}
+	return &committerpb.TxEventBatch{BlockNumber: block.Header.Number, Events: events}
+}
+
+// statusMatches reports whether status passes filter (OR match). An empty filter matches everything.
+func statusMatches(status committerpb.Status, filter []committerpb.Status) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for _, s := range filter {
+		if s == status {
+			return true
+		}
+	}
+	return false
+}
+
+// filterNamespaces returns the subset of all matching filter (OR match) along with whether
+// the transaction touches any of them. An empty filter matches every namespace.
+func filterNamespaces(all []*applicationpb.TxNamespace, filter []string) ([]*applicationpb.TxNamespace, bool) {
+	if len(filter) == 0 {
+		return all, true
+	}
+	set := make(map[string]struct{}, len(filter))
+	for _, ns := range filter {
+		set[ns] = struct{}{}
+	}
+	var matching []*applicationpb.TxNamespace
+	for _, ns := range all {
+		if _, ok := set[ns.NsId]; ok {
+			matching = append(matching, ns)
+		}
+	}
+	return matching, len(matching) > 0
 }
 
 // testSigner is a minimal sdk.Signer that returns fixed bytes.
