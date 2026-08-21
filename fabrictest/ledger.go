@@ -106,9 +106,13 @@ func (l *ledger) commit(ctx context.Context, bl blocks.Block, fbl *common.Block)
 	}
 
 	l.mu.Lock()
-	l.blocks = append(l.blocks, fbl)
-	l.mu.Unlock()
+	defer l.mu.Unlock()
 
+	l.blocks = append(l.blocks, fbl)
+
+	// Notify under the same lock as close(), so a commit racing with Stop()
+	// either completes before subs is nilled and its channels closed, or sees
+	// the post-close state (nil subs, zero iterations) — never a half-closed one.
 	for _, ch := range l.subs {
 		select {
 		case ch <- fbl:

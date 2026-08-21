@@ -131,6 +131,11 @@ func listen(port int) (net.Listener, int, error) {
 	return lis, p, err
 }
 
+// CutBlock cuts a new block with no transactions, advancing block height by one.
+func (n *Network) CutBlock(ctx context.Context) error {
+	return n.orderer.cutBlock(ctx)
+}
+
 // Stop gracefully shuts down the orderer and peer gRPC servers.
 func (n *Network) Stop() {
 	n.oSrv.Stop()

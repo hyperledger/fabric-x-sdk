@@ -33,6 +33,7 @@ func newTestOrderer(l *ledger, cfg Config) *testOrderer {
 		ledger: l,
 		config: cfg,
 		inCh:   make(chan *common.Envelope, 64),
+		cutCh:  make(chan chan error),
 		stopCh: make(chan struct{}),
 	}
 
@@ -46,6 +47,7 @@ func newTestOrderer(l *ledger, cfg Config) *testOrderer {
 type testOrderer struct {
 	ledger *ledger
 	inCh   chan *common.Envelope
+	cutCh  chan chan error
 	config Config
 	stopCh chan struct{}
 }
@@ -73,6 +75,26 @@ func (o *testOrderer) Broadcast(stream orderer.AtomicBroadcast_BroadcastServer) 
 		}); err != nil {
 			return err
 		}
+	}
+}
+
+// cutBlock forces a block with no transactions to be cut, advancing block
+// height by one. The request is funneled through batchingLoop's single
+// goroutine so it stays serialized with regular transaction processing.
+func (o *testOrderer) cutBlock(ctx context.Context) error {
+	reply := make(chan error, 1)
+
+	select {
+	case o.cutCh <- reply:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	select {
+	case err := <-reply:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -125,6 +147,9 @@ func (o *testOrderer) batchingLoop() {
 
 		case <-timerC:
 			flush()
+
+		case reply := <-o.cutCh:
+			reply <- o.ledger.process(context.Background(), nil)
 
 		case <-o.stopCh:
 			return
