@@ -174,19 +174,31 @@ func toProtoStreamAllRequest(req *notification.StreamAllRequest) *committerpb.St
 }
 
 // statusFromProto maps a Fabric-X sidecar status onto the protocol-neutral
-// notification.Status, preserving the original code's name as the reason string.
-func statusFromProto(s committerpb.Status) (notification.Status, string) {
+// notification.Status, alongside the original code's number and name so no
+// diagnostic detail is lost even for codes this SDK doesn't explicitly name.
+func statusFromProto(s committerpb.Status) (notification.Status, int32, string) {
+	var status notification.Status
 	switch s {
 	case committerpb.Status_COMMITTED:
-		return notification.StatusCommitted, s.String()
+		status = notification.StatusCommitted
 	case committerpb.Status_STATUS_UNSPECIFIED:
-		return notification.StatusUnknown, s.String()
-	case committerpb.Status_ABORTED_SIGNATURE_INVALID, committerpb.Status_ABORTED_MVCC_CONFLICT:
-		return notification.StatusInvalid, s.String()
+		status = notification.StatusUnknown
+	case committerpb.Status_ABORTED_SIGNATURE_INVALID:
+		status = notification.StatusInvalidSignature
+	case committerpb.Status_ABORTED_MVCC_CONFLICT:
+		status = notification.StatusMVCCConflict
+	case committerpb.Status_REJECTED_DUPLICATE_TX_ID:
+		status = notification.StatusDuplicateTxID
 	default:
-		// REJECTED_* and the MALFORMED_* family: rejected before validation.
-		return notification.StatusRejected, s.String()
+		if s >= 100 {
+			// The MALFORMED_* family (and any future pre-validation rejection
+			// code the sidecar adds in this range before the SDK names it).
+			status = notification.StatusMalformed
+		} else {
+			status = notification.StatusUnrecognized
+		}
 	}
+	return status, int32(s), s.String()
 }
 
 // toProtoFilterStatus expands the coarse, protocol-neutral filter statuses into
@@ -200,20 +212,23 @@ func toProtoFilterStatus(statuses []notification.Status) []committerpb.Status {
 		switch s {
 		case notification.StatusCommitted:
 			out = append(out, committerpb.Status_COMMITTED)
-		case notification.StatusInvalid:
-			out = append(out,
-				committerpb.Status_ABORTED_SIGNATURE_INVALID,
-				committerpb.Status_ABORTED_MVCC_CONFLICT)
-		case notification.StatusRejected:
-			// Sidecar codes >= 100 are pre-validation rejections: a duplicate
-			// transaction ID and the MALFORMED_* family.
+		case notification.StatusInvalidSignature:
+			out = append(out, committerpb.Status_ABORTED_SIGNATURE_INVALID)
+		case notification.StatusMVCCConflict:
+			out = append(out, committerpb.Status_ABORTED_MVCC_CONFLICT)
+		case notification.StatusDuplicateTxID:
+			out = append(out, committerpb.Status_REJECTED_DUPLICATE_TX_ID)
+		case notification.StatusMalformed:
+			// Sidecar codes >= 101 are the MALFORMED_* family (100 is the
+			// duplicate-tx-id rejection, handled above as its own status).
 			for code := range committerpb.Status_name {
-				if code >= 100 {
+				if code >= 101 {
 					out = append(out, committerpb.Status(code))
 				}
 			}
 		case notification.StatusUnknown:
 			out = append(out, committerpb.Status_STATUS_UNSPECIFIED)
+			// StatusUnrecognized has no corresponding sidecar code to filter by.
 		}
 	}
 	return out
@@ -222,12 +237,13 @@ func toProtoFilterStatus(statuses []notification.Status) []committerpb.Status {
 func convertTxEventBatch(batch *committerpb.TxEventBatch) notification.AllTxBatch {
 	events := make([]notification.CommittedTxEvent, len(batch.Events))
 	for i, e := range batch.Events {
-		status, reason := statusFromProto(e.Status)
+		status, rawCode, reason := statusFromProto(e.Status)
 		events[i] = notification.CommittedTxEvent{
 			TxID:         e.Ref.GetTxId(),
 			BlockNum:     e.Ref.GetBlockNum(),
 			TxNum:        e.Ref.GetTxNum(),
 			Status:       status,
+			RawCode:      rawCode,
 			Reason:       reason,
 			Namespaces:   e.Namespaces,
 			Endorsements: e.Endorsements,
@@ -241,12 +257,13 @@ func convertTxEventBatch(batch *committerpb.TxEventBatch) notification.AllTxBatc
 func convertTxStatuses(statuses []*committerpb.TxStatus) []notification.TxStatusEvent {
 	events := make([]notification.TxStatusEvent, 0, len(statuses))
 	for _, s := range statuses {
-		status, reason := statusFromProto(s.Status)
+		status, rawCode, reason := statusFromProto(s.Status)
 		events = append(events, notification.TxStatusEvent{
 			TxID:     s.Ref.GetTxId(),
 			BlockNum: s.Ref.GetBlockNum(),
 			TxNum:    s.Ref.GetTxNum(),
 			Status:   status,
+			RawCode:  rawCode,
 			Reason:   reason,
 		})
 	}

@@ -154,7 +154,7 @@ func TestFinalityListener_MultipleWaiters(t *testing.T) {
 	}
 
 	peer.sendEvent(t, ctx, notification.TxStatusEvent{TxID: "txB", Status: notification.StatusCommitted})
-	peer.sendEvent(t, ctx, notification.TxStatusEvent{TxID: "txA", Status: notification.StatusInvalid})
+	peer.sendEvent(t, ctx, notification.TxStatusEvent{TxID: "txA", Status: notification.StatusMVCCConflict})
 
 	for _, tc := range []struct {
 		ch    <-chan notification.TxStatusEvent
@@ -347,7 +347,7 @@ func TestFinalityListener_ReconcilesOnReconnect(t *testing.T) {
 
 // TestErrTxRejected verifies the error type.
 func TestErrTxRejected(t *testing.T) {
-	err := &notification.ErrTxRejected{TxID: "abc", Status: notification.StatusInvalid}
+	err := &notification.ErrTxRejected{TxID: "abc", Status: notification.StatusMVCCConflict}
 	if err.Error() == "" {
 		t.Error("expected non-empty error message")
 	}

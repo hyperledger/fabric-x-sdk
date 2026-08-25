@@ -19,9 +19,12 @@ func TestStatus_String(t *testing.T) {
 	}{
 		{notification.StatusUnknown, "UNKNOWN"},
 		{notification.StatusCommitted, "COMMITTED"},
-		{notification.StatusInvalid, "INVALID"},
-		{notification.StatusRejected, "REJECTED"},
-		{notification.Status(99), "UNKNOWN"}, // unrecognised code falls back to the default label
+		{notification.StatusInvalidSignature, "INVALID_SIGNATURE"},
+		{notification.StatusMVCCConflict, "MVCC_CONFLICT"},
+		{notification.StatusDuplicateTxID, "DUPLICATE_TX_ID"},
+		{notification.StatusMalformed, "MALFORMED"},
+		{notification.StatusUnrecognized, "UNRECOGNIZED"},
+		{notification.Status(99), "UNKNOWN"}, // arbitrary raw value with no constant falls back to the default label
 	}
 	for _, c := range cases {
 		if got := c.status.String(); got != c.want {
@@ -37,12 +40,35 @@ func TestStatus_IsFinal(t *testing.T) {
 	}{
 		{notification.StatusUnknown, false},
 		{notification.StatusCommitted, true},
-		{notification.StatusInvalid, true},
-		{notification.StatusRejected, true},
+		{notification.StatusInvalidSignature, true},
+		{notification.StatusMVCCConflict, true},
+		{notification.StatusDuplicateTxID, true},
+		{notification.StatusMalformed, true},
+		{notification.StatusUnrecognized, true},
 	}
 	for _, c := range cases {
 		if got := c.status.IsFinal(); got != c.want {
 			t.Errorf("Status(%d).IsFinal() = %v, want %v", c.status, got, c.want)
+		}
+	}
+}
+
+func TestStatus_Valid(t *testing.T) {
+	cases := []struct {
+		status notification.Status
+		want   bool
+	}{
+		{notification.StatusUnknown, false},
+		{notification.StatusCommitted, true},
+		{notification.StatusInvalidSignature, false},
+		{notification.StatusMVCCConflict, false},
+		{notification.StatusDuplicateTxID, false},
+		{notification.StatusMalformed, false},
+		{notification.StatusUnrecognized, false},
+	}
+	for _, c := range cases {
+		if got := c.status.Valid(); got != c.want {
+			t.Errorf("Status(%d).Valid() = %v, want %v", c.status, got, c.want)
 		}
 	}
 }

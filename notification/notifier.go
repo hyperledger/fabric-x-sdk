@@ -98,12 +98,13 @@ type TxStatusEvent struct {
 	BlockNum uint64
 	TxNum    uint32
 	Status   Status
+	RawCode  int32
 	Reason   string
 }
 
 // Valid returns true if the transaction was committed successfully.
 func (e TxStatusEvent) Valid() bool {
-	return e.Status == StatusCommitted
+	return e.Status.Valid()
 }
 
 // TxStatusHandler processes batches of transaction status events.

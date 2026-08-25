@@ -43,7 +43,7 @@ func TestProcessor(t *testing.T) {
 			TxID:     "tx2",
 			BlockNum: 1,
 			TxNum:    1,
-			Status:   notification.StatusInvalid,
+			Status:   notification.StatusMVCCConflict,
 		},
 	}
 

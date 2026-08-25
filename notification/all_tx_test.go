@@ -49,7 +49,7 @@ func TestAllTxStreamer_DeliversBatchesToHandlers(t *testing.T) {
 			{TxID: "tx1", BlockNum: 1, TxNum: 0, Status: notification.StatusCommitted},
 		}},
 		{BlockNumber: 2, Events: []notification.CommittedTxEvent{
-			{TxID: "tx2", BlockNum: 2, TxNum: 0, Status: notification.StatusInvalid},
+			{TxID: "tx2", BlockNum: 2, TxNum: 0, Status: notification.StatusMVCCConflict},
 		}},
 	}
 
@@ -151,7 +151,7 @@ func TestCommittedTxEvent_Valid(t *testing.T) {
 		t.Error("COMMITTED event should be valid")
 	}
 
-	aborted := notification.CommittedTxEvent{Status: notification.StatusInvalid}
+	aborted := notification.CommittedTxEvent{Status: notification.StatusMVCCConflict}
 	if aborted.Valid() {
 		t.Error("ABORTED event should not be valid")
 	}

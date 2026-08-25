@@ -22,6 +22,7 @@ type CommittedTxEvent struct {
 	BlockNum     uint64
 	TxNum        uint32
 	Status       Status
+	RawCode      int32
 	Reason       string
 	Namespaces   []*applicationpb.TxNamespace
 	Endorsements []*applicationpb.Endorsements
@@ -30,7 +31,7 @@ type CommittedTxEvent struct {
 
 // Valid returns true if the transaction was committed successfully.
 func (e CommittedTxEvent) Valid() bool {
-	return e.Status == StatusCommitted
+	return e.Status.Valid()
 }
 
 // AllTxBatch is a batch of transaction events from a single committed block.
@@ -64,9 +65,9 @@ type StreamAllRequest struct {
 	// the listed namespaces. Nil means no namespace filter.
 	FilterNamespaces []string
 	// FilterStatus limits events to transactions with at least one of the listed
-	// statuses. Nil means no status filter. Because Status is coarser than the
-	// underlying service's codes, a single entry may match several service codes
-	// (for example StatusRejected covers duplicate-ID and all malformed variants).
+	// statuses. Nil means no status filter. Most Status values map to a single
+	// service code, but StatusMalformed is coarser: it matches every malformed-
+	// envelope variant the underlying service reports.
 	FilterStatus []Status
 	// IncludeReadWriteSets requests that Namespaces (read/write sets) be populated
 	// on each CommittedTxEvent.
