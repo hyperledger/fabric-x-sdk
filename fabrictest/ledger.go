@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
+	"github.com/hyperledger/fabric-x-common/protoutil"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -32,14 +33,34 @@ type ledger struct {
 	validator *blocks.MVCCValidator
 }
 
-// newLedger creates a new ledger.
+// newLedger creates a new ledger, seeded with the genesis block so the chain
+// starts at block 0 exactly as a real Fabric or Fabric-X channel does.
 func newLedger(db *state.VersionedDB, parser blocks.BlockParser, validator *blocks.MVCCValidator) *ledger {
 	return &ledger{
 		db:        db,
-		blocks:    make([]*common.Block, 0),
+		blocks:    []*common.Block{makeGenesisBlock()},
 		parser:    parser,
 		validator: validator,
 	}
+}
+
+// makeGenesisBlock creates block 0: a config block holding a single CONFIG envelope,
+// mirroring the shape Fabric and Fabric-X networks start from. A real network stores
+// the channel configuration in it; fabrictest has no channel config, so the payload is
+// otherwise empty and the block only has to be recognizable. That is enough for
+// protoutil.IsConfigBlock and anything else that classifies a block by inspecting
+// Data.Data[0] to behave as it would against a real network.
+func makeGenesisBlock() *common.Block {
+	env := &common.Envelope{
+		Payload: protoutil.MarshalOrPanic(&common.Payload{
+			Header: &common.Header{
+				ChannelHeader: protoutil.MarshalOrPanic(&common.ChannelHeader{
+					Type: int32(common.HeaderType_CONFIG),
+				}),
+			},
+		}),
+	}
+	return makeBlock(0, []*common.Envelope{env})
 }
 
 // process validates the batch of transactions and stores them in a block.
@@ -138,11 +159,12 @@ func (l *ledger) subscribe() ([]*common.Block, chan *common.Block) {
 	return existing, ch
 }
 
-// height is the block height
+// height is the block height: the number of blocks in the chain, counting the
+// genesis block at 0. As in Fabric, the next block to be cut takes this number.
 func (l *ledger) height() uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return uint64(len(l.blocks) + 1)
+	return uint64(len(l.blocks))
 }
 
 // close shuts down the ledger by closing all subscriber channels (which causes

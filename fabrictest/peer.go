@@ -82,7 +82,7 @@ func (p *testPeer) Deliver(stream peer.Deliver_DeliverServer) error {
 
 	// For SeekNewest, start from the current tip (no historical replay).
 	if newest {
-		startBlock = uint64(len(existing))
+		startBlock = existing[len(existing)-1].Header.Number
 	}
 
 	// Replay historical blocks starting from startBlock.
