@@ -9,6 +9,7 @@ package fabrictest
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -207,9 +208,6 @@ func (p *testPeer) StreamAllTransactions(req *committerpb.StreamAllRequest, stre
 // buildTxEventBatch decodes block into a TxEventBatch filtered per req.
 // It returns nil if the block has no events matching the filters.
 func buildTxEventBatch(block *common.Block, req *committerpb.StreamAllRequest) *committerpb.TxEventBatch {
-	if len(block.Metadata.Metadata) <= int(common.BlockMetadataIndex_TRANSACTIONS_FILTER) {
-		return nil
-	}
 	txFilter := block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER]
 
 	var events []*committerpb.TxEvent
@@ -221,6 +219,9 @@ func buildTxEventBatch(block *common.Block, req *committerpb.StreamAllRequest) *
 		pl := &common.Payload{}
 		if err := proto.Unmarshal(env.Payload, pl); err != nil {
 			continue
+		}
+		if pl.Header == nil {
+			continue // malformed: a payload without a header carries no channel header
 		}
 		chdr := &common.ChannelHeader{}
 		if err := proto.Unmarshal(pl.Header.ChannelHeader, chdr); err != nil {
@@ -234,10 +235,7 @@ func buildTxEventBatch(block *common.Block, req *committerpb.StreamAllRequest) *
 			continue
 		}
 
-		status := committerpb.Status_STATUS_UNSPECIFIED
-		if txNum < len(txFilter) {
-			status = committerpb.Status(txFilter[txNum])
-		}
+		status := committerpb.Status(txFilter[txNum])
 		if !statusMatches(status, req.FilterStatus) {
 			continue
 		}
@@ -279,12 +277,7 @@ func statusMatches(status committerpb.Status, filter []committerpb.Status) bool 
 	if len(filter) == 0 {
 		return true
 	}
-	for _, s := range filter {
-		if s == status {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(filter, status)
 }
 
 // filterNamespaces returns the subset of all matching filter (OR match) along with whether

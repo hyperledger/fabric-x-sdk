@@ -81,6 +81,9 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 	if err := proto.Unmarshal(env.Payload, pl); err != nil {
 		return nil, fmt.Errorf("payload: %w", err)
 	}
+	if pl.Header == nil {
+		return nil, fmt.Errorf("payload has no header")
+	}
 	chdr := &common.ChannelHeader{}
 	if err := proto.Unmarshal(pl.Header.ChannelHeader, chdr); err != nil {
 		return nil, fmt.Errorf("channel header: %w", err)

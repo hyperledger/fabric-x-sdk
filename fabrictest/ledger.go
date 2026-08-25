@@ -59,17 +59,22 @@ func (l *ledger) process(ctx context.Context, env []*common.Envelope) error {
 		return err // should not happen
 	}
 
-	// Set transaction numbers (position in block) before validation.
-	for i := range bl.Transactions {
-		bl.Transactions[i].Number = int64(i)
-	}
+	// Parse already set each tx.Number to its position in the block; don't renumber
+	// by slice index, which drifts whenever Parse drops a config or malformed tx.
 
 	// Validate all transactions; updates bl.Transactions[i].Valid and returns txFilter.
 	txFilter, err := l.validator.Validate(&bl)
 	if err != nil {
 		return err
 	}
-	copy(fbl.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER], txFilter)
+
+	// txFilter is indexed by position in bl.Transactions, which omits any transaction
+	// Parse dropped, so scatter the statuses back to their block positions rather than
+	// copying wholesale. Dropped positions keep their zero (unspecified) status.
+	blockFilter := fbl.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER]
+	for i, status := range txFilter {
+		blockFilter[bl.Transactions[i].Number] = status
+	}
 
 	// commit them to the ledger
 	return l.commit(ctx, bl, fbl)
