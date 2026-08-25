@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package state
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -127,7 +128,7 @@ func TestBlockNumber_Zero(t *testing.T) {
 	}
 }
 
-func TestBatchInsert_FailsOnDuplicate(t *testing.T) {
+func TestUpdateWorldState_ReplayIsNoop(t *testing.T) {
 	db := newTestDB(t)
 	bl := blocks.Block{Number: 2, Transactions: []blocks.Transaction{{
 		ID: "txid", Number: 0, Valid: true, NsRWS: []blocks.NsReadWriteSet{{
@@ -137,9 +138,75 @@ func TestBatchInsert_FailsOnDuplicate(t *testing.T) {
 	if err := db.UpdateWorldState(t.Context(), bl); err != nil {
 		t.Fatal(err)
 	}
-	// Re-inserting the same block must fail and roll back.
-	if err := db.UpdateWorldState(t.Context(), bl); err == nil {
-		t.Fatal("expected error on duplicate block insert")
+	before, err := db.GetCurrent("ns", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Replaying the same block must be a no-op: no error, no state change.
+	if err := db.UpdateWorldState(t.Context(), bl); err != nil {
+		t.Fatalf("expected replay to succeed, got: %v", err)
+	}
+
+	after, err := db.GetCurrent("ns", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Version != after.Version || !bytes.Equal(before.Value, after.Value) {
+		t.Errorf("expected state unchanged by replay, before=%+v after=%+v", before, after)
+	}
+
+	history, err := db.GetHistory("ns", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 {
+		t.Errorf("expected replay to not create a duplicate row, got %d records", len(history))
+	}
+
+	n, err := db.BlockNumber(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("expected block progress to remain 2, got %d", n)
+	}
+}
+
+func TestUpdateWorldState_GenuineConflictErrors(t *testing.T) {
+	db := newTestDB(t)
+	mustWrite(t, db, "ns", "a", 2, 0, []byte("va"))
+
+	// Same (channel, namespace, key, version_block, version_tx) coordinates as the
+	// write above, but a different value: this is not a legitimate replay and must
+	// be rejected rather than silently discarded.
+	conflicting := blocks.Block{Number: 2, Transactions: []blocks.Transaction{
+		{ID: "txid", Number: 0, Valid: true, NsRWS: []blocks.NsReadWriteSet{{
+			Namespace: "ns", RWS: blocks.ReadWriteSet{Writes: []blocks.KVWrite{{Key: "a", Value: []byte("different")}}},
+		}}},
+		{ID: "tx-other", Number: 1, Valid: true, NsRWS: []blocks.NsReadWriteSet{{
+			Namespace: "ns", RWS: blocks.ReadWriteSet{Writes: []blocks.KVWrite{{Key: "b", Value: []byte("vb")}}},
+		}}},
+	}}
+	if err := db.UpdateWorldState(t.Context(), conflicting); err == nil {
+		t.Fatal("expected error on conflicting write, got nil")
+	}
+
+	// The whole call must roll back: "a" keeps its original value, and "b" (from the
+	// same failed batch) must not have been inserted either.
+	a, err := db.GetCurrent("ns", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == nil || string(a.Value) != "va" {
+		t.Errorf("expected ns/a to keep original value, got %+v", a)
+	}
+	b, err := db.GetCurrent("ns", "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b != nil {
+		t.Errorf("expected ns/b to not be inserted after rollback, got %+v", b)
 	}
 }
 

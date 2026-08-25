@@ -10,6 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 package state
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -99,7 +100,11 @@ func (db *VersionedDB) Handle(ctx context.Context, b blocks.Block) error {
 // UpdateWorldState inserts all transactions of a block in a single transaction.
 // The version for each write is computed as MAX(version)+1 for that (namespace,key),
 // so concurrent writes to the same key within a batch receive consecutive versions.
-// UpdateWorldState fails if any of the transactions in the block has been processed before.
+// UpdateWorldState is idempotent: replaying a block whose writes are all already
+// present, with identical content, is a no-op. If a write collides with an existing
+// row at the same (channel, namespace, key, version_block, version_tx) but with
+// different content, that indicates a bug elsewhere (e.g. non-deterministic block
+// parsing) rather than a legitimate replay, and UpdateWorldState returns an error.
 func (db *VersionedDB) UpdateWorldState(ctx context.Context, b blocks.Block) error {
 	sqlTx, err := db.backend.BeginTx(ctx, nil)
 	if err != nil {
@@ -107,19 +112,27 @@ func (db *VersionedDB) UpdateWorldState(ctx context.Context, b blocks.Block) err
 	}
 	defer sqlTx.Rollback() //nolint:errcheck
 
-	// If we wanted the call to be idempotent, we would add:
-	// ON CONFLICT (channel, namespace, key, version_block, version_tx) DO NOTHING
 	var stmt *sql.Stmt
 	stmt, err = sqlTx.Prepare(`
 	INSERT INTO worldstate (channel, namespace, key, version_block, version_tx, version, value, is_delete, tx_id)
 	VALUES ($1, $2, $3, $4, $5,
 		COALESCE((SELECT MAX(version) + 1 FROM worldstate WHERE channel=$1 AND namespace=$2 AND key=$3), 0),
 		$6, $7, $8)
+	ON CONFLICT (channel, namespace, key, version_block, version_tx) DO NOTHING
 	`)
 	if err != nil {
 		return fmt.Errorf("prepare batch insert: %w", err)
 	}
 	defer stmt.Close() //nolint:errcheck
+
+	checkStmt, err := sqlTx.Prepare(`
+	SELECT value, is_delete, tx_id FROM worldstate
+	WHERE channel=$1 AND namespace=$2 AND key=$3 AND version_block=$4 AND version_tx=$5
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare conflict check: %w", err)
+	}
+	defer checkStmt.Close() //nolint:errcheck
 
 	for _, tx := range b.Transactions {
 		if !tx.Valid {
@@ -127,8 +140,30 @@ func (db *VersionedDB) UpdateWorldState(ctx context.Context, b blocks.Block) err
 		}
 		for _, nsrws := range tx.NsRWS {
 			for _, w := range nsrws.RWS.Writes {
-				if _, err := stmt.Exec(db.channel, nsrws.Namespace, w.Key, b.Number, tx.Number, w.Value, w.IsDelete, tx.ID); err != nil {
+				res, err := stmt.Exec(db.channel, nsrws.Namespace, w.Key, b.Number, tx.Number, w.Value, w.IsDelete, tx.ID)
+				if err != nil {
 					return fmt.Errorf("batch insert exec: %w", err)
+				}
+				affected, err := res.RowsAffected()
+				if err != nil {
+					return fmt.Errorf("batch insert rows affected: %w", err)
+				}
+				if affected > 0 {
+					continue
+				}
+				// The row already existed (primary key conflict). Verify it's identical.
+				var existingValue []byte
+				var existingIsDelete bool
+				var existingTxID string
+				row := checkStmt.QueryRow(db.channel, nsrws.Namespace, w.Key, b.Number, tx.Number)
+				if err := row.Scan(&existingValue, &existingIsDelete, &existingTxID); err != nil {
+					return fmt.Errorf("check conflicting write: %w", err)
+				}
+				if !bytes.Equal(existingValue, w.Value) || existingIsDelete != w.IsDelete || existingTxID != tx.ID {
+					return fmt.Errorf("conflicting write at channel=%s namespace=%s key=%s block=%d tx=%d: "+
+						"existing (is_delete=%v tx_id=%s) differs from replayed (is_delete=%v tx_id=%s)",
+						db.channel, nsrws.Namespace, w.Key, b.Number, tx.Number,
+						existingIsDelete, existingTxID, w.IsDelete, tx.ID)
 				}
 			}
 		}
