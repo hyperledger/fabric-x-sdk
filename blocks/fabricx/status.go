@@ -41,3 +41,9 @@ func StatusFromCommitterStatus(s committerpb.Status) (status blocks.Status, rawC
 	}
 	return status, int32(s), s.String()
 }
+
+// CodesByStatus is the reverse of StatusFromCommitterStatus. Where we map several
+// Fabric-X codes to the same blocks.Status, we always return the smallest.
+func CodesByStatus() map[blocks.Status]int32 {
+	return blocks.CodesByStatus(committerpb.Status_name, StatusFromCommitterStatus)
+}

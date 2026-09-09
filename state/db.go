@@ -227,6 +227,22 @@ func (db *VersionedDB) GetCurrent(namespace, key string) (*blocks.WriteRecord, e
 	return &w, nil
 }
 
+// currentRecordGetter adapts a *VersionedDB to blocks.RecordGetter via GetCurrent,
+// ignoring the db's own time-travel Get.
+type currentRecordGetter struct{ db *VersionedDB }
+
+func (r currentRecordGetter) Get(namespace, key string) (*blocks.WriteRecord, error) {
+	return r.db.GetCurrent(namespace, key)
+}
+
+// CurrentRecordGetter returns a blocks.RecordGetter backed by db's GetCurrent, always
+// reading the latest committed value for a key. Use this wherever an API wants a
+// blocks.RecordGetter (for example blocks.NewMVCCValidator or local.NewLocalSubmitter)
+// backed by this VersionedDB.
+func (db *VersionedDB) CurrentRecordGetter() blocks.RecordGetter {
+	return currentRecordGetter{db}
+}
+
 // GetHistory returns all versions of a key ordered by block height.
 func (db *VersionedDB) GetHistory(namespace, key string) ([]blocks.WriteRecord, error) {
 	query := `

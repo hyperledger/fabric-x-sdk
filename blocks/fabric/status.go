@@ -38,3 +38,9 @@ func StatusFromValidationCode(code peer.TxValidationCode) (status blocks.Status,
 	}
 	return status, int32(code), code.String()
 }
+
+// CodesByStatus is the reverse of StatusFromValidationCode. Where we map several
+// Fabric codes to the same blocks.Status, we always return the smallest.
+func CodesByStatus() map[blocks.Status]int32 {
+	return blocks.CodesByStatus(peer.TxValidationCode_name, StatusFromValidationCode)
+}
