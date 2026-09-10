@@ -60,8 +60,8 @@ func Start(ctx context.Context, namespace, networkType string, cfg Config, db1 b
 	}
 
 	var rg blocks.RecordGetter
-	// by default, read MVCC conflicts from our own DB
-	rg = db
+	// by default, read MVCC conflicts from our own DB, against its latest committed state
+	rg = db.CurrentRecordGetter()
 	if db1 != nil {
 		// if we're given an external database from which we can read MVCC conflicts, use that
 		rg = db1

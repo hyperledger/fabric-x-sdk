@@ -267,8 +267,6 @@ func testPointInTimeSimulation(t *testing.T, s *testSetup) {
 	prefix := t.Name() + "/" + rand.Text()
 	key := prefix + "/k"
 
-	base, _ := s.localDB.BlockNumber(ctx)
-
 	if err := s.endorseAndSubmit(ctx, blocks.ReadWriteSet{
 		Writes: []blocks.KVWrite{{Key: key, Value: []byte("v0")}},
 	}); err != nil {
@@ -276,21 +274,29 @@ func testPointInTimeSimulation(t *testing.T, s *testSetup) {
 	}
 	s.waitForKeyValue(t, key, "v0")
 
-	val, staleRWS := s.simulate(t, 0, key)
-	if string(val) != "v0" {
-		t.Fatalf("expected v0 from snapshot, got %q", val)
+	// Pin a snapshot at the height right after v0 committed.
+	snapshotBlock, err := s.localDB.BlockNumber(ctx)
+	if err != nil {
+		t.Fatalf("BlockNumber: %v", err)
 	}
-	staleRWS.Writes = []blocks.KVWrite{{Key: key, Value: []byte("v_stale")}}
 
-	// Advance key to v1 and wait for it to be committed so the stale
-	// snapshot's read version is definitely outdated when the stale RWS arrives.
+	// Advance the key past the snapshot height *before* reading it, so a read
+	// that resolved to "current" instead of the pinned height would see v1, not v0.
 	if err := s.endorseAndSubmit(ctx, blocks.ReadWriteSet{
 		Writes: []blocks.KVWrite{{Key: key, Value: []byte("v1")}},
 	}); err != nil {
 		t.Fatalf("submit v1: %v", err)
 	}
-	s.waitForBlock(t, base+2)
+	s.waitForKeyValue(t, key, "v1")
 
+	val, staleRWS := s.simulate(t, snapshotBlock, key)
+	if string(val) != "v0" {
+		t.Fatalf("snapshot at block %d: got %q, want %q (v1 has already committed by now)", snapshotBlock, val, "v0")
+	}
+	staleRWS.Writes = []blocks.KVWrite{{Key: key, Value: []byte("v_stale")}}
+
+	// Building on that stale read and submitting it must be rejected: the committed
+	// state has moved on to v1 since the snapshot was taken.
 	if err := s.endorseAndSubmit(ctx, staleRWS); err != nil {
 		t.Fatalf("submit stale rws (orderer-level success expected): %v", err)
 	}

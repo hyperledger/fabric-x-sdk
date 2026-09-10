@@ -13,16 +13,10 @@ import (
 	sdk "github.com/hyperledger/fabric-x-sdk"
 )
 
-const (
-	statusValid    = byte(0)
-	statusConflict = byte(1)
-	statusInvalid  = byte(2)
-)
-
 // mockDB is a simple in-memory RecordGetter for tests.
 type mockDB map[string]*WriteRecord
 
-func (m mockDB) Get(namespace, key string, _ uint64) (*WriteRecord, error) {
+func (m mockDB) Get(namespace, key string) (*WriteRecord, error) {
 	rec, ok := m[namespace+"/"+key]
 	if !ok {
 		return nil, nil
@@ -32,12 +26,12 @@ func (m mockDB) Get(namespace, key string, _ uint64) (*WriteRecord, error) {
 
 type errDB struct{}
 
-func (errDB) Get(_, _ string, _ uint64) (*WriteRecord, error) {
+func (errDB) Get(_, _ string) (*WriteRecord, error) {
 	return nil, errors.New("db error")
 }
 
 func newValidator(db RecordGetter, monotonic bool) *MVCCValidator {
-	return NewMVCCValidator(db, statusValid, statusConflict, statusInvalid, monotonic, sdk.NoOpLogger{})
+	return NewMVCCValidator(db, monotonic, sdk.NoOpLogger{})
 }
 
 // singleTxBlock builds a one-transaction Block with the given reads in namespace ns.
@@ -57,27 +51,24 @@ func TestMVCCValidator(t *testing.T) {
 	const ns = "ns"
 
 	tests := []struct {
-		name      string
-		db        RecordGetter
-		monotonic bool
-		reads     []KVRead
-		wantValid bool
-		wantByte  byte
-		wantErr   bool
+		name       string
+		db         RecordGetter
+		monotonic  bool
+		reads      []KVRead
+		wantStatus Status
+		wantErr    bool
 	}{
 		{
-			name:      "no reads always valid",
-			db:        mockDB{},
-			reads:     nil,
-			wantValid: true,
-			wantByte:  statusValid,
+			name:       "no reads always valid",
+			db:         mockDB{},
+			reads:      nil,
+			wantStatus: StatusCommitted,
 		},
 		{
-			name:      "key absent, version nil: ok",
-			db:        mockDB{},
-			reads:     []KVRead{{Key: "k", Version: nil}},
-			wantValid: true,
-			wantByte:  statusValid,
+			name:       "key absent, version nil: ok",
+			db:         mockDB{},
+			reads:      []KVRead{{Key: "k", Version: nil}},
+			wantStatus: StatusCommitted,
 		},
 		{
 			name: "key absent, version expected: conflict",
@@ -85,18 +76,16 @@ func TestMVCCValidator(t *testing.T) {
 			reads: []KVRead{
 				{Key: "k", Version: &Version{BlockNum: 1, TxNum: 0}},
 			},
-			wantValid: false,
-			wantByte:  statusConflict,
+			wantStatus: StatusMVCCConflict,
 		},
 		{
 			name: "key present, version nil: conflict (fabric mode)",
 			db: mockDB{
 				ns + "/k": {BlockNum: 1, TxNum: 0},
 			},
-			monotonic: false,
-			reads:     []KVRead{{Key: "k", Version: nil}},
-			wantValid: false,
-			wantByte:  statusConflict,
+			monotonic:  false,
+			reads:      []KVRead{{Key: "k", Version: nil}},
+			wantStatus: StatusMVCCConflict,
 		},
 		{
 			// Matches validate_reads_ns_*'s SQL: no protocol-specific leniency.
@@ -104,10 +93,9 @@ func TestMVCCValidator(t *testing.T) {
 			db: mockDB{
 				ns + "/k": {BlockNum: 1, TxNum: 0},
 			},
-			monotonic: true,
-			reads:     []KVRead{{Key: "k", Version: nil}},
-			wantValid: false,
-			wantByte:  statusConflict,
+			monotonic:  true,
+			reads:      []KVRead{{Key: "k", Version: nil}},
+			wantStatus: StatusMVCCConflict,
 		},
 		{
 			name: "fabric mode: matching version valid",
@@ -118,8 +106,7 @@ func TestMVCCValidator(t *testing.T) {
 			reads: []KVRead{
 				{Key: "k", Version: &Version{BlockNum: 2, TxNum: 1}},
 			},
-			wantValid: true,
-			wantByte:  statusValid,
+			wantStatus: StatusCommitted,
 		},
 		{
 			name: "fabric mode: version mismatch conflict",
@@ -130,8 +117,7 @@ func TestMVCCValidator(t *testing.T) {
 			reads: []KVRead{
 				{Key: "k", Version: &Version{BlockNum: 2, TxNum: 0}},
 			},
-			wantValid: false,
-			wantByte:  statusConflict,
+			wantStatus: StatusMVCCConflict,
 		},
 		{
 			name: "fabric-x mode: matching version valid",
@@ -142,8 +128,7 @@ func TestMVCCValidator(t *testing.T) {
 			reads: []KVRead{
 				{Key: "k", Version: &Version{BlockNum: 5}},
 			},
-			wantValid: true,
-			wantByte:  statusValid,
+			wantStatus: StatusCommitted,
 		},
 		{
 			name: "fabric-x mode: version mismatch conflict",
@@ -154,16 +139,14 @@ func TestMVCCValidator(t *testing.T) {
 			reads: []KVRead{
 				{Key: "k", Version: &Version{BlockNum: 4}},
 			},
-			wantValid: false,
-			wantByte:  statusConflict,
+			wantStatus: StatusMVCCConflict,
 		},
 		{
-			name:      "db error returns invalid status and error",
-			db:        errDB{},
-			reads:     []KVRead{{Key: "k", Version: &Version{BlockNum: 1}}},
-			wantValid: false,
-			wantByte:  statusInvalid,
-			wantErr:   true,
+			name:       "db error returns unknown status and error",
+			db:         errDB{},
+			reads:      []KVRead{{Key: "k", Version: &Version{BlockNum: 1}}},
+			wantStatus: StatusUnknown,
+			wantErr:    true,
 		},
 	}
 
@@ -171,20 +154,19 @@ func TestMVCCValidator(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			v := newValidator(tc.db, tc.monotonic)
 			block := singleTxBlock(ns, 10, tc.reads)
-			txFilter, err := v.Validate(block)
+			_, err := v.Validate(block)
 			if tc.wantErr && err == nil {
 				t.Fatal("expected error, got nil")
 			}
 			if !tc.wantErr && err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			valid := block.Transactions[0].Valid()
-			status := txFilter[0]
-			if valid != tc.wantValid {
-				t.Errorf("valid: got %v, want %v", valid, tc.wantValid)
+			status := block.Transactions[0].Status
+			if status != tc.wantStatus {
+				t.Errorf("status: got %v, want %v", status, tc.wantStatus)
 			}
-			if status != tc.wantByte {
-				t.Errorf("status: got %v, want %v", status, tc.wantByte)
+			if valid := block.Transactions[0].Valid(); valid != tc.wantStatus.Valid() {
+				t.Errorf("valid: got %v, want %v", valid, tc.wantStatus.Valid())
 			}
 		})
 	}
@@ -237,19 +219,18 @@ func TestMVCCValidatorIntraBlock(t *testing.T) {
 				},
 			}
 
-			txFilter, err := v.Validate(block)
-			if err != nil {
+			if _, err := v.Validate(block); err != nil {
 				t.Fatalf("Validate: unexpected error: %v", err)
 			}
 
-			if !block.Transactions[0].Valid() || txFilter[0] != statusValid {
-				t.Errorf("tx0: expected valid, got valid=%v status=%v", block.Transactions[0].Valid(), txFilter[0])
+			if status := block.Transactions[0].Status; status != StatusCommitted {
+				t.Errorf("tx0: expected committed, got %v", status)
 			}
-			if block.Transactions[1].Valid() || txFilter[1] != statusConflict {
-				t.Errorf("tx1: expected conflict, got valid=%v status=%v", block.Transactions[1].Valid(), txFilter[1])
+			if status := block.Transactions[1].Status; status != StatusMVCCConflict {
+				t.Errorf("tx1: expected conflict, got %v", status)
 			}
-			if !block.Transactions[2].Valid() || txFilter[2] != statusValid {
-				t.Errorf("tx2: expected valid for unrelated key, got valid=%v status=%v", block.Transactions[2].Valid(), txFilter[2])
+			if status := block.Transactions[2].Status; status != StatusCommitted {
+				t.Errorf("tx2: expected committed for unrelated key, got %v", status)
 			}
 
 			// A second Validate call resets state; tx1's read of "k" is valid again.
@@ -265,15 +246,100 @@ func TestMVCCValidatorIntraBlock(t *testing.T) {
 					},
 				},
 			}
-			txFilter2, err := v.Validate(block2)
-			if err != nil {
+			if _, err := v.Validate(block2); err != nil {
 				t.Fatalf("second Validate: unexpected error: %v", err)
 			}
-			if !block2.Transactions[0].Valid() || txFilter2[0] != statusValid {
-				t.Errorf("after second Validate: expected valid, got valid=%v status=%v", block2.Transactions[0].Valid(), txFilter2[0])
+			if status := block2.Transactions[0].Status; status != StatusCommitted {
+				t.Errorf("after second Validate: expected committed, got %v", status)
 			}
 		})
 	}
+}
+
+// TestMVCCValidatorCodesAndTxFilter verifies that Validate's txFilter and each
+// Transaction's RawCode/Reason are driven by the configured Codes map, and that an
+// unmapped status (including a nil Codes map) falls back to UncustomizedCode without
+// colliding with any real ledger code.
+func TestMVCCValidatorCodesAndTxFilter(t *testing.T) {
+	const ns = "ns"
+	codes := map[Status]int32{
+		StatusCommitted:    1,
+		StatusMVCCConflict: 11,
+		StatusUnknown:      99,
+	}
+
+	t.Run("Codes populated", func(t *testing.T) {
+		v := newValidator(mockDB{}, false)
+		v.Codes = codes
+
+		block := &Block{
+			Number: 1,
+			Transactions: []Transaction{
+				{Number: 0, NsRWS: []NsReadWriteSet{{Namespace: ns, RWS: ReadWriteSet{Reads: []KVRead{{Key: "k", Version: nil}}}}}},
+				{Number: 1, NsRWS: []NsReadWriteSet{{Namespace: ns, RWS: ReadWriteSet{Reads: []KVRead{{Key: "missing", Version: &Version{BlockNum: 1}}}}}}},
+			},
+		}
+		txFilter, err := v.Validate(block)
+		if err != nil {
+			t.Fatalf("Validate: unexpected error: %v", err)
+		}
+
+		if got, want := txFilter[0], byte(codes[StatusCommitted]); got != want {
+			t.Errorf("txFilter[0]: got %d, want %d", got, want)
+		}
+		if got, want := block.Transactions[0].RawCode, codes[StatusCommitted]; got != want {
+			t.Errorf("tx0 RawCode: got %d, want %d", got, want)
+		}
+
+		if got, want := txFilter[1], byte(codes[StatusMVCCConflict]); got != want {
+			t.Errorf("txFilter[1]: got %d, want %d", got, want)
+		}
+		if got, want := block.Transactions[1].RawCode, codes[StatusMVCCConflict]; got != want {
+			t.Errorf("tx1 RawCode: got %d, want %d", got, want)
+		}
+		if reason := block.Transactions[1].Reason; reason == "" {
+			t.Error("tx1 Reason: expected a non-empty conflict detail, got empty string")
+		}
+	})
+
+	t.Run("Codes nil falls back to UncustomizedCode, no collision with a real code", func(t *testing.T) {
+		v := newValidator(mockDB{ns + "/k": {BlockNum: 1, TxNum: 0}}, false)
+
+		block := singleTxBlock(ns, 1, []KVRead{{Key: "k", Version: nil}}) // conflict: version nil, record exists
+		txFilter, err := v.Validate(block)
+		if err != nil {
+			t.Fatalf("Validate: unexpected error: %v", err)
+		}
+
+		if got, want := block.Transactions[0].RawCode, UncustomizedCode; got != want {
+			t.Errorf("RawCode: got %d, want %d", got, want)
+		}
+		if got, want := txFilter[0], byte(UncustomizedCode); got != want {
+			t.Errorf("txFilter[0]: got %d, want %d", got, want)
+		}
+		// 255 is classic Fabric's INVALID_OTHER_REASON; UncustomizedCode must not
+		// truncate to it or any other real single-byte protocol code.
+		if txFilter[0] == 255 {
+			t.Error("txFilter[0] collides with a real Fabric TxValidationCode byte")
+		}
+	})
+
+	t.Run("db error uses codeFor(StatusUnknown)", func(t *testing.T) {
+		v := newValidator(errDB{}, false)
+		v.Codes = codes
+
+		block := singleTxBlock(ns, 1, []KVRead{{Key: "k", Version: &Version{BlockNum: 1}}})
+		txFilter, err := v.Validate(block)
+		if err == nil {
+			t.Fatal("Validate: expected error, got nil")
+		}
+		if got, want := block.Transactions[0].RawCode, codes[StatusUnknown]; got != want {
+			t.Errorf("RawCode: got %d, want %d", got, want)
+		}
+		if got, want := txFilter[0], byte(codes[StatusUnknown]); got != want {
+			t.Errorf("txFilter[0]: got %d, want %d", got, want)
+		}
+	})
 }
 
 // TestMVCCValidatorCrossBlockStaleRead: a key written for the first time in
@@ -304,12 +370,11 @@ func TestMVCCValidatorCrossBlockStaleRead(t *testing.T) {
 					},
 				},
 			}
-			txFilter1, err := v.Validate(block1)
-			if err != nil {
+			if _, err := v.Validate(block1); err != nil {
 				t.Fatalf("Validate block1: %v", err)
 			}
-			if !block1.Transactions[0].Valid() || txFilter1[0] != statusValid {
-				t.Fatalf("block1 tx0: expected valid, got valid=%v status=%v", block1.Transactions[0].Valid(), txFilter1[0])
+			if status := block1.Transactions[0].Status; status != StatusCommitted {
+				t.Fatalf("block1 tx0: expected committed, got %v", status)
 			}
 			// Simulate the ledger committing tx0's write before block 2 is validated.
 			db[ns+"/balance"] = &WriteRecord{BlockNum: 1, TxNum: 0, Version: 1}
@@ -328,13 +393,11 @@ func TestMVCCValidatorCrossBlockStaleRead(t *testing.T) {
 					},
 				},
 			}
-			txFilter2, err := v.Validate(block2)
-			if err != nil {
+			if _, err := v.Validate(block2); err != nil {
 				t.Fatalf("Validate block2: %v", err)
 			}
-			if block2.Transactions[0].Valid() || txFilter2[0] != statusConflict {
-				t.Errorf("block2 tx1: expected conflict (stale read of key first written in block1), got valid=%v status=%v",
-					block2.Transactions[0].Valid(), txFilter2[0])
+			if status := block2.Transactions[0].Status; status != StatusMVCCConflict {
+				t.Errorf("block2 tx1: expected conflict (stale read of key first written in block1), got %v", status)
 			}
 		})
 	}

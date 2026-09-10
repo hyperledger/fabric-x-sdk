@@ -5,8 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 */
 
 // package local can be used to mock a fabric backend for testing. Instead of submitting
-// to an orderer, it can insert read/write sets directly in a local database. Some MVCC
-// checks are provided, but should not be trusted to be 1:1 compatible with a real network.
+// to an orderer, it can insert read/write sets directly in a local database. MVCC checks
+// use the same comparison rules as blocks.MVCCValidator, but other aspects of a real
+// network (ordering, endorsement policies, cryptographic verification) are not modeled.
 package local
 
 import (
@@ -18,12 +19,11 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-// VersionedDB is the storage interface required by LocalSubmitter.
+// VersionedDB is the storage interface required by LocalSubmitter for committing blocks.
 // state.VersionedDB satisfies this interface.
 type VersionedDB interface {
 	BlockNumber(ctx context.Context) (uint64, error)
 	Handle(ctx context.Context, b blocks.Block) error
-	Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error)
 }
 
 // LocalSubmitter directly stores the writes in the shared database.
@@ -31,6 +31,7 @@ type VersionedDB interface {
 // and TxParser, dependent on the ledger type in the endorsement.
 type LocalSubmitter struct {
 	sharedState       VersionedDB
+	recordGetter      blocks.RecordGetter // reads sharedState's latest value for MVCC validation
 	packager          TxPackager
 	parser            TxParser
 	channel           string
@@ -48,11 +49,15 @@ type TxParser interface {
 	ParseTx(env *common.Envelope) (*blocks.Transaction, error)
 }
 
-// NewLocalSubmitter creates a LocalSubmitter. Set monotonicVersions=true for Fabric-X MVCC
-// semantics (per-key version counter) and false for classic Fabric (blockNum/txNum pairs).
-func NewLocalSubmitter(sharedState VersionedDB, channel, namespace string, packager TxPackager, parser TxParser, monotonicVersions bool) *LocalSubmitter {
+// NewLocalSubmitter creates a LocalSubmitter. recordGetter is used to validate MVCC reads
+// against sharedState's latest committed value; it's usually sharedState's own
+// CurrentRecordGetter().
+// Set monotonicVersions=true for Fabric-X MVCC semantics (per-key version counter) and
+// false for classic Fabric (blockNum/txNum pairs).
+func NewLocalSubmitter(sharedState VersionedDB, recordGetter blocks.RecordGetter, channel, namespace string, packager TxPackager, parser TxParser, monotonicVersions bool) *LocalSubmitter {
 	c := &LocalSubmitter{
 		sharedState:       sharedState,
+		recordGetter:      recordGetter,
 		channel:           channel,
 		namespace:         namespace,
 		packager:          packager,
@@ -84,15 +89,7 @@ func (s LocalSubmitter) Submit(ctx context.Context, end sdk.Endorsement) error {
 		return err
 	}
 
-	var rws blocks.ReadWriteSet
-	for _, n := range tx.NsRWS {
-		if n.Namespace == s.namespace {
-			rws = n.RWS
-			break
-		}
-	}
-
-	if err := validateReads(s.sharedState, s.namespace, blockNum, rws.Reads, s.monotonicVersions); err != nil {
+	if err := s.checkMVCC(tx); err != nil {
 		return err
 	}
 
@@ -106,47 +103,33 @@ func (s *LocalSubmitter) Close() error {
 	return nil
 }
 
-func validateReads(st VersionedDB, ns string, blockNum uint64, reads []blocks.KVRead, fabricX bool) error {
-	for _, r := range reads {
-		rec, err := st.Get(ns, r.Key, blockNum)
-		if err != nil {
-			return fmt.Errorf("failed to get state for key %q: %v", r.Key, err)
+// checkMVCC validates this submitter's namespace's reads in tx against the shared
+// state's latest values, using the same comparison rules as the real committer
+// (blocks.MVCCValidator). Other namespaces in tx, if any, are not this shared
+// state's concern and are left unchecked.
+func (s LocalSubmitter) checkMVCC(tx *blocks.Transaction) error {
+	var rws blocks.ReadWriteSet
+	for _, n := range tx.NsRWS {
+		if n.Namespace == s.namespace {
+			rws = n.RWS
+			break
 		}
+	}
 
-		if rec == nil && r.Version == nil {
-			continue // both nil, valid
-		}
+	// A fresh validator per call avoids sharing MVCCValidator's pending-writes
+	// state across concurrent Submit calls; it holds nothing else worth reusing.
+	validator := blocks.NewMVCCValidator(s.recordGetter, s.monotonicVersions, sdk.NoOpLogger{})
 
-		if rec == nil && r.Version != nil {
-			return fmt.Errorf("RWS INVALID for key %q: expected version, got nil", r.Key)
-		}
-
-		if rec != nil && r.Version == nil {
-			if fabricX {
-				// In Fabric-X, proto version=0 is dropped by the parser (we expect version > 0),
-				// resulting in nil. Nil means no version constraint — treat as blind write.
-				continue
-			}
-			return fmt.Errorf("RWS INVALID for key %q: expected nil version, got a record", r.Key)
-		}
-
-		// rec != nil && r.Version != nil: compare according to ledger type.
-		if fabricX {
-			if rec.Version != r.Version.BlockNum {
-				return fmt.Errorf(
-					"RWS INVALID for key %q: read version=%d, blockchain version=%d",
-					r.Key, r.Version.BlockNum, rec.Version,
-				)
-			}
-		} else {
-			if rec.BlockNum != r.Version.BlockNum || rec.TxNum != r.Version.TxNum {
-				return fmt.Errorf(
-					"RWS INVALID for key %q: read version=%d:%d, blockchain version=%d:%d",
-					r.Key, r.Version.BlockNum, r.Version.TxNum,
-					rec.BlockNum, rec.TxNum,
-				)
-			}
-		}
+	block := &blocks.Block{
+		Transactions: []blocks.Transaction{{
+			NsRWS: []blocks.NsReadWriteSet{{Namespace: s.namespace, RWS: rws}},
+		}},
+	}
+	if _, err := validator.Validate(block); err != nil {
+		return fmt.Errorf("failed to get state for read validation: %w", err)
+	}
+	if !block.Transactions[0].Valid() {
+		return fmt.Errorf("RWS INVALID for tx %q in namespace %q: %s", tx.ID, s.namespace, block.Transactions[0].Reason)
 	}
 	return nil
 }

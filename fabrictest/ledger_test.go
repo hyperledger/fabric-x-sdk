@@ -26,7 +26,7 @@ func newTestLedger(t *testing.T) *ledger {
 		t.Fatalf("create db: %v", err)
 	}
 	logger := sdk.NewStdLogger("fabrictest")
-	l := newLedger(db, fabricx.NewBlockParser(logger), fabricx.NewMVCCValidator(db, logger))
+	l := newLedger(db, fabricx.NewBlockParser(logger), fabricx.NewMVCCValidator(db.CurrentRecordGetter(), logger))
 	t.Cleanup(l.close)
 	return l
 }

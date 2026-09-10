@@ -6,6 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 
 package blocks
 
+import "slices"
+
 // Status is the protocol-neutral outcome of a transaction. It abstracts over
 // the finer-grained status codes reported by a specific ledger (classic
 // Fabric's peer.TxValidationCode, or the Fabric-X sidecar's
@@ -62,6 +64,29 @@ func (s Status) IsFinal() bool {
 // StatusCommitted is the only valid status.
 func (s Status) Valid() bool {
 	return s == StatusCommitted
+}
+
+// CodesByStatus inverts a ledger-specific forward-mapping function fn (e.g.
+// fabric.StatusFromValidationCode or fabricx.StatusFromCommitterStatus) over every
+// code named in names (that protocol's proto-generated *_name map, e.g.
+// peer.TxValidationCode_name), returning the smallest raw code that maps to each
+// Status. Where several codes map to the same Status, the smallest is returned so
+// the result is deterministic regardless of map iteration order.
+func CodesByStatus[T ~int32](names map[int32]string, fn func(T) (Status, int32, string)) map[Status]int32 {
+	codes := make([]int32, 0, len(names))
+	for code := range names {
+		codes = append(codes, code)
+	}
+	slices.Sort(codes)
+
+	result := make(map[Status]int32, len(codes))
+	for _, code := range codes {
+		status, rawCode, _ := fn(T(code))
+		if _, ok := result[status]; !ok {
+			result[status] = rawCode
+		}
+	}
+	return result
 }
 
 // String returns a stable, upper-case label for the status.

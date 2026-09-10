@@ -56,7 +56,7 @@ func newTestDB(t *testing.T) *state.VersionedDB {
 
 func newSubmitter(t *testing.T, db *state.VersionedDB, rws blocks.ReadWriteSet) *LocalSubmitter {
 	t.Helper()
-	return NewLocalSubmitter(db, "chan1", "ns",
+	return NewLocalSubmitter(db, db.CurrentRecordGetter(), "chan1", "ns",
 		&fixedPackager{env: &common.Envelope{}},
 		&fixedParser{rws: rws, txID: "txid"},
 		false,
