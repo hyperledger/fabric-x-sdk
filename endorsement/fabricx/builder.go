@@ -8,9 +8,8 @@ package fabricx
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
@@ -60,17 +59,10 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 
 	metadata := [][]byte{inputBytes, eventBytes}
 
-	prpBytes, err := marshalRWSet(res.RWS, inv.CCID.Name, metadata)
+	tx := buildTx(res.RWS, inv.CCID.Name, metadata)
+	prpBytes, err := proto.Marshal(tx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal read/write set: %w", err)
-	}
-
-	var tx applicationpb.Tx
-	if err := proto.Unmarshal(prpBytes, &tx); err != nil {
-		return nil, fmt.Errorf("failed to deserialize tx")
-	}
-	if len(tx.Namespaces) == 0 {
-		return nil, errors.New("nothing to endorse")
 	}
 
 	digest, err := tx.Namespaces[0].ASN1Marshal(inv.TxID, metadata)
@@ -102,7 +94,10 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 	}, nil
 }
 
-func marshalRWSet(rws blocks.ReadWriteSet, namespace string, metadata [][]byte) ([]byte, error) {
+// buildTx splits the read-write set into the three Fabric-X access kinds, sorted
+// by key so the result does not depend on the caller's ordering. Every endorser
+// of a transaction has to produce the same bytes, so this stays deterministic.
+func buildTx(rws blocks.ReadWriteSet, namespace string, metadata [][]byte) *applicationpb.Tx {
 	writes := append([]blocks.KVWrite(nil), rws.Writes...)
 	readByKey := make(map[string]blocks.KVRead, len(rws.Reads))
 	for _, r := range rws.Reads {
@@ -149,17 +144,17 @@ func marshalRWSet(rws blocks.ReadWriteSet, namespace string, metadata [][]byte) 
 	}
 
 	// sort the results
-	sort.Slice(readsOnly, func(i, j int) bool {
-		return bytes.Compare(readsOnly[i].Key, readsOnly[j].Key) < 0
+	slices.SortFunc(readsOnly, func(a, b *applicationpb.Read) int {
+		return bytes.Compare(a.Key, b.Key)
 	})
-	sort.Slice(readWrites, func(i, j int) bool {
-		return bytes.Compare(readWrites[i].Key, readWrites[j].Key) < 0
+	slices.SortFunc(readWrites, func(a, b *applicationpb.ReadWrite) int {
+		return bytes.Compare(a.Key, b.Key)
 	})
-	sort.Slice(blindWrites, func(i, j int) bool {
-		return bytes.Compare(blindWrites[i].Key, blindWrites[j].Key) < 0
+	slices.SortFunc(blindWrites, func(a, b *applicationpb.Write) int {
+		return bytes.Compare(a.Key, b.Key)
 	})
 
-	tx := &applicationpb.Tx{
+	return &applicationpb.Tx{
 		Metadata: metadata,
 		Namespaces: []*applicationpb.TxNamespace{{
 			NsId:        namespace,
@@ -169,11 +164,4 @@ func marshalRWSet(rws blocks.ReadWriteSet, namespace string, metadata [][]byte) 
 			BlindWrites: blindWrites,
 		}},
 	}
-
-	rw, err := proto.Marshal(tx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal rwset: %w", err)
-	}
-
-	return rw, nil
 }

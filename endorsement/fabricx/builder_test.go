@@ -148,7 +148,7 @@ func TestEndorse_MetadataFixedWidth(t *testing.T) {
 	}
 }
 
-func TestMarshalRWSet(t *testing.T) {
+func TestBuildTx(t *testing.T) {
 	tests := []struct {
 		name      string
 		rws       blocks.ReadWriteSet
@@ -264,15 +264,7 @@ func TestMarshalRWSet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			raw, err := marshalRWSet(tt.rws, tt.namespace, nil)
-			if err != nil {
-				t.Fatalf("marshalRWSet returned error: %v", err)
-			}
-
-			var tx applicationpb.Tx
-			if err := proto.Unmarshal(raw, &tx); err != nil {
-				t.Fatalf("failed to unmarshal tx: %v", err)
-			}
+			tx := buildTx(tt.rws, tt.namespace, nil)
 			if len(tx.Namespaces) != 1 {
 				t.Fatalf("expected 1 namespace, got %d", len(tx.Namespaces))
 			}
