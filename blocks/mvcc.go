@@ -129,6 +129,11 @@ func (l *MVCCValidator) checkNs(ns string, reads []KVRead) (Status, string, erro
 		if err != nil {
 			return StatusUnknown, "", fmt.Errorf("failed to get state for key %q: %v", r.Key, err)
 		}
+		if rec != nil && rec.IsDelete {
+			// A tombstone (kept by a store that preserves its version counter
+			// across a delete) has no live value: treat it as no record.
+			rec = nil
+		}
 
 		// no existing read at this blockheight
 		if rec == nil {
