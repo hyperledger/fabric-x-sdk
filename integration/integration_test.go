@@ -336,7 +336,25 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		t.Fatalf("NewSubmitter: %v", err)
 	}
 
-	go sync.Start(t.Context())              //nolint:errcheck
+	// Start must be joined, not merely cancelled: its shutdown path logs the
+	// transition to stopped through the test logger, and t.Logf after a test has
+	// completed races with the testing package and fails the run — usually blaming
+	// whichever unrelated test was executing at the time. t.Context() is cancelled
+	// just before cleanups run, so by the time this one fires Start is already on its
+	// way out and the wait is brief. Cleanups run in reverse order of registration,
+	// so this lands after submitter.Close and before the localDB.Close above.
+	syncDone := make(chan struct{})
+	go func() {
+		defer close(syncDone)
+		sync.Start(t.Context()) //nolint:errcheck
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-syncDone:
+		case <-time.After(10 * time.Second):
+			t.Error("synchronizer did not stop within 10s of its context being cancelled")
+		}
+	})
 	t.Cleanup(func() { submitter.Close() }) //nolint:errcheck
 
 	waitUntilSynced(t, sync, 10*time.Second)

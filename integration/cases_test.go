@@ -553,7 +553,20 @@ func testStreamAllTransactions(t *testing.T, s *testSetup) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
+	// Cancel first, then wait: the streaming goroutine logs and calls t.Errorf, and
+	// neither is legal once this test has returned. Deferred calls run in reverse, so
+	// this wait happens after the cancel above.
+	streamDone := make(chan struct{})
+	defer func() {
+		select {
+		case <-streamDone:
+		case <-time.After(10 * time.Second):
+			t.Error("stream did not return within 10s of being cancelled")
+		}
+	}()
+
 	go func() {
+		defer close(streamDone)
 		if err := streamer.Stream(ctx, &notification.StreamAllRequest{
 			FilterNamespaces:     []string{s.namespace},
 			IncludeReadWriteSets: true,
@@ -598,8 +611,15 @@ type allTxCapture struct {
 	batches chan notification.AllTxBatch
 }
 
-func (c *allTxCapture) HandleBatch(_ context.Context, batch notification.AllTxBatch) error {
-	c.batches <- batch
+// HandleBatch buffers the batch for the test to inspect, dropping it if the stream is
+// being torn down. The test stops reading as soon as it has seen the batch it cares
+// about, so an unconditional send would block here once the buffer filled and would
+// keep Stream from ever returning.
+func (c *allTxCapture) HandleBatch(ctx context.Context, batch notification.AllTxBatch) error {
+	select {
+	case c.batches <- batch:
+	case <-ctx.Done():
+	}
 	return nil
 }
 

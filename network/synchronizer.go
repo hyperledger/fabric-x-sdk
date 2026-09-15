@@ -58,8 +58,9 @@ func (s syncState) String() string {
 // Synchronizer connects to a committing peer to maintain a local copy of the world state.
 //
 // Lifecycle: call Start once with a context. When that context is canceled the synchronizer
-// stops the monitor goroutine, closes the peer connection, and transitions to stateStopped.
-// A stopped Synchronizer cannot be restarted; create a new instance instead.
+// transitions to stateStopped, waits for the monitor goroutine to exit, closes the peer
+// connection, and returns. Once Start has returned the Synchronizer owns no running
+// goroutine. A stopped Synchronizer cannot be restarted; create a new instance instead.
 type Synchronizer struct {
 	db        BlockHeightReader
 	peer      SyncPeer
@@ -71,6 +72,12 @@ type Synchronizer struct {
 	lastSyncErr   error              // last error that caused a transition to stateRetrying
 	monitorCancel context.CancelFunc // non-nil only while a monitor goroutine is running
 	runCtx        context.Context    // set once in Start(); used by transition to derive the monitor context
+
+	// monitorWG tracks the monitor goroutines transition starts so Start can wait for
+	// the last one to exit before returning. Cancelling a monitor only asks it to
+	// stop: without the join it can still be inside a peer call, or logging, after
+	// Start has returned and its caller considers the synchronizer shut down.
+	monitorWG sync.WaitGroup
 }
 
 // BlockHeightReader reads the last processed block number from a local store.
@@ -79,6 +86,10 @@ type BlockHeightReader interface {
 }
 
 // SyncPeer is the remote peer used for block streaming and chain height queries.
+//
+// Every method taking a context must return when that context is cancelled: the
+// synchronizer's shutdown waits for the calls it has in flight before closing the
+// peer, so a method that ignored cancellation would stall Start's return.
 type SyncPeer interface {
 	SubscribeBlocks(context.Context, uint64, BlockProcessor) error
 	BlockHeight(context.Context) (uint64, error)
@@ -115,7 +126,10 @@ func (s *Synchronizer) Start(ctx context.Context) error {
 	s.mu.Unlock()
 
 	defer func() {
-		s.transition(stateStopped, nil)
+		s.transition(stateStopped, nil) // cancels the monitor goroutine
+		// Join before closing the peer: the monitor queries peer.BlockHeight, so
+		// closing underneath it would race, and its logging must not outlive Start.
+		s.monitorWG.Wait()
 		if err := s.peer.Close(); err != nil {
 			s.log.Warnf("peer close: %v", err)
 		}
@@ -208,7 +222,14 @@ func (s *Synchronizer) transition(to syncState, err error) {
 		}
 		monCtx, cancel := context.WithCancel(s.runCtx)
 		s.monitorCancel = cancel
-		go s.monitorReadiness(monCtx)
+		// Registered before the goroutine starts, and while mu is held, so Start's
+		// Wait cannot observe a gap between the two. Reaching stateStopped is what
+		// closes the door on new monitors, and that transition returns early below.
+		s.monitorWG.Add(1)
+		go func() {
+			defer s.monitorWG.Done()
+			s.monitorReadiness(monCtx)
+		}()
 
 	case stateRetrying:
 		s.lastSyncErr = err
