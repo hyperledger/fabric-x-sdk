@@ -23,7 +23,7 @@ type fixedSigner struct{}
 func (fixedSigner) Sign(_ []byte) ([]byte, error) { return []byte("sig"), nil }
 func (fixedSigner) Serialize() ([]byte, error)    { return []byte("identity"), nil }
 
-var ccID = &peer.ChaincodeID{Name: "mycc"}
+const testNamespace = "mycc"
 
 func endorse(t *testing.T, rws blocks.ReadWriteSet) *peer.ProposalResponse {
 	t.Helper()
@@ -31,7 +31,7 @@ func endorse(t *testing.T, rws blocks.ReadWriteSet) *peer.ProposalResponse {
 		TxID:         "txid",
 		ProposalHash: []byte("prophash"),
 		Args:         [][]byte{},
-		CCID:         ccID,
+		Namespace:    testNamespace,
 	}
 	resp, err := NewEndorsementBuilder(fixedSigner{}).Endorse(in, endorsement.ExecutionResult{RWS: rws})
 	if err != nil {
@@ -50,7 +50,7 @@ func parseTx(t *testing.T, resp *peer.ProposalResponse) *applicationpb.TxNamespa
 		t.Fatalf("expected 1 namespace, got %d", len(tx.Namespaces))
 	}
 	ns := tx.Namespaces[0]
-	if ns.NsId != ccID.Name {
+	if ns.NsId != testNamespace {
 		t.Errorf("unexpected namespace: %q", ns.NsId)
 	}
 	return ns
@@ -104,6 +104,29 @@ func TestEndorse_Delete(t *testing.T) {
 	}
 }
 
+// TestEndorse_NsVersion guards against the regression where Endorse built the
+// committed Tx with NsVersion hardcoded to 0, silently discarding whatever
+// version the Invocation carried. The committer enforces this as a real MVCC
+// staleness check, so a wrong value here would make Endorse's output diverge
+// from what the caller built the transaction against.
+func TestEndorse_NsVersion(t *testing.T) {
+	in := endorsement.Invocation{
+		TxID:         "txid",
+		ProposalHash: []byte("prophash"),
+		Args:         [][]byte{},
+		Namespace:    testNamespace,
+		NsVersion:    7,
+	}
+	resp, err := NewEndorsementBuilder(fixedSigner{}).Endorse(in, endorsement.ExecutionResult{})
+	if err != nil {
+		t.Fatalf("Endorse failed: %v", err)
+	}
+	ns := parseTx(t, resp)
+	if ns.NsVersion != 7 {
+		t.Errorf("unexpected NsVersion: got %d, want %d", ns.NsVersion, 7)
+	}
+}
+
 // TestEndorse_MetadataFixedWidth guards against a regression where metadata
 // entries were only conditionally appended: an empty Args with a non-empty
 // Event produced a single-entry metadata slice, which DecodeMetadata's fixed
@@ -114,7 +137,7 @@ func TestEndorse_MetadataFixedWidth(t *testing.T) {
 		TxID:         "txid",
 		ProposalHash: []byte("prophash"),
 		Args:         nil,
-		CCID:         ccID,
+		Namespace:    testNamespace,
 	}
 	res := endorsement.ExecutionResult{Event: []byte("myevent")}
 
@@ -153,6 +176,7 @@ func TestBuildTx(t *testing.T) {
 		name      string
 		rws       blocks.ReadWriteSet
 		namespace string
+		nsVersion uint64
 		txid      []byte
 
 		expectReadsOnly   []expectedRead
@@ -260,11 +284,27 @@ func TestBuildTx(t *testing.T) {
 				{Key: "f", Value: []byte("f"), BlockNum: ptr(9)},
 			},
 		},
+		{
+			// Regression: NsVersion was hardcoded to 0 in buildTx, silently
+			// discarding whatever version the caller built the tx against.
+			name: "nsVersion is carried through, not hardcoded to zero",
+			rws: blocks.ReadWriteSet{
+				Writes: []blocks.KVWrite{
+					{Key: "a", Value: []byte("value-a")},
+				},
+			},
+			namespace: "ns1",
+			nsVersion: 7,
+			txid:      []byte("tx6"),
+			expectBlindWrites: []expectedWrite{
+				{Key: "a", Value: []byte("value-a")},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tx := buildTx(tt.rws, tt.namespace, nil)
+			tx := buildTx(tt.rws, tt.namespace, tt.nsVersion, nil)
 			if len(tx.Namespaces) != 1 {
 				t.Fatalf("expected 1 namespace, got %d", len(tx.Namespaces))
 			}
@@ -272,6 +312,9 @@ func TestBuildTx(t *testing.T) {
 			ns := tx.Namespaces[0]
 			if ns.NsId != tt.namespace {
 				t.Fatalf("unexpected namespace id: got %q, want %q", ns.NsId, tt.namespace)
+			}
+			if ns.NsVersion != tt.nsVersion {
+				t.Errorf("unexpected NsVersion: got %d, want %d", ns.NsVersion, tt.nsVersion)
 			}
 
 			assertReadsOnly(t, tt.expectReadsOnly, ns.ReadsOnly)

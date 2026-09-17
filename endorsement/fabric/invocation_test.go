@@ -21,7 +21,7 @@ import (
 
 func newInvocation(t *testing.T) endorsement.Invocation {
 	t.Helper()
-	inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("mychannel", "myns", "v1", [][]byte{[]byte("fn"), []byte("arg")})
+	inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("mychannel", "myns", "v1", 0, [][]byte{[]byte("fn"), []byte("arg")})
 	if err != nil {
 		t.Fatalf("NewInvocation failed: %v", err)
 	}
@@ -81,8 +81,8 @@ func TestNewInvocation_NonceIsFresh(t *testing.T) {
 
 func TestNewInvocation_CarriesNamespaceAndArgs(t *testing.T) {
 	inv := newInvocation(t)
-	if inv.CCID == nil || inv.CCID.Name != "myns" || inv.CCID.Version != "v1" {
-		t.Errorf("unexpected chaincode id: %+v", inv.CCID)
+	if inv.Namespace != "myns" || inv.ChaincodeVersion != "v1" {
+		t.Errorf("unexpected namespace/version: %+v", inv)
 	}
 	if inv.Channel != "mychannel" {
 		t.Errorf("unexpected channel: %q", inv.Channel)
@@ -98,7 +98,7 @@ func (failingSigner) Sign(_ []byte) ([]byte, error) { return nil, errors.New("si
 func (failingSigner) Serialize() ([]byte, error)    { return nil, errors.New("no identity") }
 
 func TestNewInvocation_SerializeError(t *testing.T) {
-	_, err := NewInvocationBuilder(failingSigner{}).NewInvocation("mychannel", "myns", "v1", nil)
+	_, err := NewInvocationBuilder(failingSigner{}).NewInvocation("mychannel", "myns", "v1", 0, nil)
 	if err == nil {
 		t.Fatal("expected an error when the signer cannot serialize")
 	}
@@ -113,7 +113,7 @@ func TestNewInvocation_ParseableByEndorser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSignedProposal: %v", err)
 	}
-	parsed, err := endorsement.Parse(signed, time.Now())
+	parsed, err := Parse(signed, time.Now())
 	if err != nil {
 		t.Fatalf("Parse rejected a full proposal: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestNewInvocation_ParseableByEndorser(t *testing.T) {
 
 func TestNewInvocation_NilSigner(t *testing.T) {
 	for _, b := range []InvocationBuilder{NewInvocationBuilder(nil), {}} {
-		_, err := b.NewInvocation("mychannel", "myns", "v1", nil)
+		_, err := b.NewInvocation("mychannel", "myns", "v1", 0, nil)
 		if err == nil {
 			t.Fatal("expected an error for a nil signer")
 		}
@@ -142,7 +142,7 @@ func TestNewInvocation_NilSigner(t *testing.T) {
 
 func TestNewInvocation_AsInterface(t *testing.T) {
 	var b endorsement.InvocationBuilder = NewInvocationBuilder(fixedSigner{})
-	inv, err := b.NewInvocation("mychannel", "myns", "v1", [][]byte{[]byte("fn")})
+	inv, err := b.NewInvocation("mychannel", "myns", "v1", 0, [][]byte{[]byte("fn")})
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}
@@ -180,15 +180,12 @@ func TestNewInvocation_EmptyInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation(tt.channel, tt.namespace, tt.nsVersion, tt.args)
+			inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation(tt.channel, tt.namespace, tt.nsVersion, 0, tt.args)
 			if err != nil {
 				t.Fatalf("NewInvocation: %v", err)
 			}
 			if inv.TxID == "" {
 				t.Error("tx id must be set even for empty inputs")
-			}
-			if inv.CCID == nil {
-				t.Fatal("CCID must never be nil, the builder dereferences it")
 			}
 			if _, err := NewEndorsementBuilder(fixedSigner{}).Endorse(inv, endorsement.Success(
 				blocks.ReadWriteSet{Writes: []blocks.KVWrite{{Key: "k", Value: []byte("v")}}}, nil, nil)); err != nil {
@@ -208,7 +205,7 @@ func TestNewInvocation_ConcurrentUniqueness(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("ch", "ns", "v1", nil)
+			inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("ch", "ns", "v1", 0, nil)
 			if err != nil {
 				t.Errorf("NewInvocation: %v", err)
 				return

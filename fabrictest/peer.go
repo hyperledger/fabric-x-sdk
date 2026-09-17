@@ -134,13 +134,13 @@ func (p *testPeer) DeliverWithPrivateData(grpc.BidiStreamingServer[common.Envelo
 // It only handles qscc GetChainInfo requests to return blockchain height.
 func (p *testPeer) ProcessProposal(ctx context.Context, prop *peer.SignedProposal) (*peer.ProposalResponse, error) {
 	// Parse the proposal
-	inv, err := endorsement.Parse(prop, time.Now())
+	inv, err := fabric.Parse(prop, time.Now())
 	if err != nil {
 		return nil, err
 	}
 
 	// Check if this is a qscc GetChainInfo request
-	if inv.CCID.Name != "qscc" || len(inv.Args) == 0 || string(inv.Args[0]) != "GetChainInfo" {
+	if inv.Namespace != "qscc" || len(inv.Args) == 0 || string(inv.Args[0]) != "GetChainInfo" {
 		return nil, errors.New("only qscc GetChainInfo is supported in fabrictest")
 	}
 

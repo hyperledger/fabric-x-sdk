@@ -48,7 +48,7 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 		var err error
 		eventBytes, err = proto.Marshal(&peer.ChaincodeEvent{
 			Payload:     res.Event,
-			ChaincodeId: inv.CCID.Name,
+			ChaincodeId: inv.Namespace,
 			TxId:        inv.TxID,
 			EventName:   "log",
 		})
@@ -59,7 +59,7 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 
 	metadata := [][]byte{inputBytes, eventBytes}
 
-	tx := buildTx(res.RWS, inv.CCID.Name, metadata)
+	tx := buildTx(res.RWS, inv.Namespace, inv.NsVersion, metadata)
 	prpBytes, err := proto.Marshal(tx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal read/write set: %w", err)
@@ -97,7 +97,7 @@ func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.
 // buildTx splits the read-write set into the three Fabric-X access kinds, sorted
 // by key so the result does not depend on the caller's ordering. Every endorser
 // of a transaction has to produce the same bytes, so this stays deterministic.
-func buildTx(rws blocks.ReadWriteSet, namespace string, metadata [][]byte) *applicationpb.Tx {
+func buildTx(rws blocks.ReadWriteSet, namespace string, nsVersion uint64, metadata [][]byte) *applicationpb.Tx {
 	writes := append([]blocks.KVWrite(nil), rws.Writes...)
 	readByKey := make(map[string]blocks.KVRead, len(rws.Reads))
 	for _, r := range rws.Reads {
@@ -158,7 +158,7 @@ func buildTx(rws blocks.ReadWriteSet, namespace string, metadata [][]byte) *appl
 		Metadata: metadata,
 		Namespaces: []*applicationpb.TxNamespace{{
 			NsId:        namespace,
-			NsVersion:   0,
+			NsVersion:   nsVersion,
 			ReadsOnly:   readsOnly,
 			ReadWrites:  readWrites,
 			BlindWrites: blindWrites,

@@ -40,16 +40,23 @@ type InvocationBuilder struct {
 // header, leaving out the proposal payload, the proposal hash and the chaincode
 // header extension, none of which a Fabric-X envelope reads.
 //
+// chaincodeVersion is Fabric's chaincode-version convention; it is unread on
+// this path but accepted so both protocols' builders satisfy the same
+// endorsement.InvocationBuilder interface. nsVersion is the namespace's
+// current MVCC version counter — the committer rejects the resulting
+// transaction as stale if it doesn't match the namespace's actual current
+// version.
+//
 // Every call mints a fresh nonce and transaction id. Under a multi-endorser
 // policy, build the invocation once and hand the same one to every endorser:
 // the transaction id is part of what each endorser signs, so endorsers that
 // each built their own would sign different digests. Their payloads can still
 // match, which means the packager cannot always catch it.
 //
-// The result is not a proposal an endorser can parse. endorsement.Parse reads
+// The result is not a proposal an endorser can parse. fabric.Parse reads
 // the proposal payload, deliberately absent here, so this serves the local
 // submit path rather than a request to a remote endorser.
-func (b InvocationBuilder) NewInvocation(channel, namespace, nsVersion string, args [][]byte) (endorsement.Invocation, error) {
+func (b InvocationBuilder) NewInvocation(channel, namespace, chaincodeVersion string, nsVersion uint64, args [][]byte) (endorsement.Invocation, error) {
 	if b.signer == nil {
 		return endorsement.Invocation{}, errors.New("nil signer")
 	}
@@ -85,12 +92,14 @@ func (b InvocationBuilder) NewInvocation(channel, namespace, nsVersion string, a
 	}
 
 	return endorsement.Invocation{
-		TxID:     txID,
-		Nonce:    nonce,
-		Creator:  creator,
-		Args:     args,
-		CCID:     &peer.ChaincodeID{Name: namespace, Version: nsVersion},
-		Channel:  channel,
-		Proposal: &peer.Proposal{Header: hdr},
+		TxID:             txID,
+		Nonce:            nonce,
+		Creator:          creator,
+		Args:             args,
+		Namespace:        namespace,
+		ChaincodeVersion: chaincodeVersion,
+		NsVersion:        nsVersion,
+		Channel:          channel,
+		Proposal:         &peer.Proposal{Header: hdr},
 	}, nil
 }

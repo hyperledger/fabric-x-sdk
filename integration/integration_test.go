@@ -394,7 +394,7 @@ func waitUntilSynced(t *testing.T, sync *network.Synchronizer, timeout time.Dura
 }
 
 func (s *testSetup) endorseAndSubmit(ctx context.Context, rws blocks.ReadWriteSet) error {
-	inv, err := s.invocations.NewInvocation(s.channel, s.namespace, "1.0", [][]byte{[]byte("invoke")})
+	inv, err := s.invocations.NewInvocation(s.channel, s.namespace, "1.0", 0, [][]byte{[]byte("invoke")})
 	if err != nil {
 		return fmt.Errorf("NewInvocation: %w", err)
 	}
@@ -415,7 +415,7 @@ func (s *testSetup) endorseAndSubmit(ctx context.Context, rws blocks.ReadWriteSe
 // and returns the combined sdk.Endorsement (one response per builder).
 func (s *testSetup) newInvocation(t *testing.T, args [][]byte) endorsement.Invocation {
 	t.Helper()
-	inv, err := s.invocations.NewInvocation(s.channel, s.namespace, "1.0", args)
+	inv, err := s.invocations.NewInvocation(s.channel, s.namespace, "1.0", 0, args)
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}

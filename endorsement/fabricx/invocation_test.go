@@ -21,14 +21,19 @@ import (
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	"github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	"github.com/hyperledger/fabric-x-sdk/fabrictest"
 	networkfabricx "github.com/hyperledger/fabric-x-sdk/network/fabricx"
 	"google.golang.org/protobuf/proto"
 )
 
+// testNsVersion is a fixed, non-zero MVCC namespace version used by
+// newInvocation so tests exercise the real field rather than its zero value.
+const testNsVersion = 7
+
 func newInvocation(t *testing.T) endorsement.Invocation {
 	t.Helper()
-	inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("mychannel", "myns", "v1", [][]byte{[]byte("fn"), []byte("arg")})
+	inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("mychannel", "myns", "v1", testNsVersion, [][]byte{[]byte("fn"), []byte("arg")})
 	if err != nil {
 		t.Fatalf("NewInvocation failed: %v", err)
 	}
@@ -87,7 +92,7 @@ func TestNewInvocation_HeaderFields(t *testing.T) {
 		t.Errorf("unexpected channel id: %q", chdr.ChannelId)
 	}
 	if chdr.Timestamp == nil {
-		t.Error("timestamp must be set, endorsement.Parse rejects a proposal without one")
+		t.Error("timestamp must be set, fabric.Parse rejects a proposal without one")
 	}
 }
 
@@ -124,8 +129,8 @@ func TestNewInvocation_NonceIsFresh(t *testing.T) {
 
 func TestNewInvocation_CarriesNamespaceAndArgs(t *testing.T) {
 	inv := newInvocation(t)
-	if inv.CCID == nil || inv.CCID.Name != "myns" || inv.CCID.Version != "v1" {
-		t.Errorf("unexpected chaincode id: %+v", inv.CCID)
+	if inv.Namespace != "myns" || inv.ChaincodeVersion != "v1" || inv.NsVersion != testNsVersion {
+		t.Errorf("unexpected namespace/version: %+v", inv)
 	}
 	if inv.Channel != "mychannel" {
 		t.Errorf("unexpected channel: %q", inv.Channel)
@@ -142,7 +147,7 @@ func (failingSigner) Sign(_ []byte) ([]byte, error) { return nil, errors.New("si
 func (failingSigner) Serialize() ([]byte, error)    { return nil, errors.New("no identity") }
 
 func TestNewInvocation_SerializeError(t *testing.T) {
-	_, err := NewInvocationBuilder(failingSigner{}).NewInvocation("mychannel", "myns", "v1", nil)
+	_, err := NewInvocationBuilder(failingSigner{}).NewInvocation("mychannel", "myns", "v1", 0, nil)
 	if err == nil {
 		t.Fatal("expected an error when the signer cannot serialize")
 	}
@@ -153,7 +158,7 @@ func TestNewInvocation_SerializeError(t *testing.T) {
 
 func TestNewInvocation_NilSigner(t *testing.T) {
 	for _, b := range []InvocationBuilder{NewInvocationBuilder(nil), {}} {
-		_, err := b.NewInvocation("mychannel", "myns", "v1", nil)
+		_, err := b.NewInvocation("mychannel", "myns", "v1", 0, nil)
 		if err == nil {
 			t.Fatal("expected an error for a nil signer")
 		}
@@ -165,7 +170,7 @@ func TestNewInvocation_NilSigner(t *testing.T) {
 
 func TestNewInvocation_AsInterface(t *testing.T) {
 	var b endorsement.InvocationBuilder = NewInvocationBuilder(fixedSigner{})
-	inv, err := b.NewInvocation("mychannel", "myns", "v1", [][]byte{[]byte("fn")})
+	inv, err := b.NewInvocation("mychannel", "myns", "v1", 0, [][]byte{[]byte("fn")})
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}
@@ -301,7 +306,7 @@ func TestNewInvocation_DivergentEndorsersRejected(t *testing.T) {
 }
 
 // TestNewInvocation_NotForRemoteEndorsers pins down the boundary of this
-// constructor. endorsement.Parse reads the proposal payload, which a header-only
+// constructor. fabric.Parse reads the proposal payload, which a header-only
 // invocation does not carry, so this cannot be used to build a SignedProposal
 // for an endorser that parses one. It is for the local submit path, where the
 // Invocation is handed to the builder directly.
@@ -311,7 +316,7 @@ func TestNewInvocation_NotForRemoteEndorsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSignedProposal: %v", err)
 	}
-	if _, err := endorsement.Parse(signed, time.Now()); err == nil {
+	if _, err := fabric.Parse(signed, time.Now()); err == nil {
 		t.Fatal("expected Parse to reject a proposal with no payload; " +
 			"if this now passes, the doc comment on NewInvocation needs updating")
 	}
@@ -334,18 +339,15 @@ func TestNewInvocation_EmptyInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation(tt.channel, tt.namespace, tt.nsVersion, tt.args)
+			inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation(tt.channel, tt.namespace, tt.nsVersion, 0, tt.args)
 			if err != nil {
 				t.Fatalf("NewInvocation: %v", err)
 			}
 			if inv.TxID == "" {
 				t.Error("tx id must be set even for empty inputs")
 			}
-			if inv.CCID == nil {
-				t.Fatal("CCID must never be nil, the builder dereferences it")
-			}
 
-			// The builder must survive it too: CCID.Name feeds the namespace and
+			// The builder must survive it too: Namespace feeds the namespace and
 			// the event, and empty args must still produce two metadata entries.
 			resp, err := NewEndorsementBuilder(fabrictest.MockSigner{}).Endorse(inv, endorsement.Success(
 				blocks.ReadWriteSet{Writes: []blocks.KVWrite{{Key: "k", Value: []byte("v")}}}, nil, nil))
@@ -361,11 +363,11 @@ func TestNewInvocation_EmptyInputs(t *testing.T) {
 
 func TestNewInvocation_LongAndUnicodeNamespace(t *testing.T) {
 	ns := strings.Repeat("ünïcödé-ns-", 40)
-	inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("채널", ns, "v1", [][]byte{[]byte("大きい")})
+	inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("채널", ns, "v1", 0, [][]byte{[]byte("大きい")})
 	if err != nil {
 		t.Fatalf("NewInvocation: %v", err)
 	}
-	if inv.CCID.Name != ns {
+	if inv.Namespace != ns {
 		t.Error("namespace does not round-trip")
 	}
 	chdr, _ := headers(t, inv)
@@ -383,16 +385,14 @@ func TestNewInvocation_ConcurrentUniqueness(t *testing.T) {
 	ids := make([]string, n)
 	nonces := make([][]byte, n)
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("ch", "ns", "v1", nil)
+		wg.Go(func() {
+			inv, err := NewInvocationBuilder(fixedSigner{}).NewInvocation("ch", "ns", "v1", 0, nil)
 			if err != nil {
 				t.Errorf("NewInvocation: %v", err)
 				return
 			}
 			ids[i], nonces[i] = inv.TxID, inv.Nonce
-		}()
+		})
 	}
 	wg.Wait()
 

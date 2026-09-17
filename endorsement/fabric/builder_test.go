@@ -23,7 +23,7 @@ type fixedSigner struct{}
 func (fixedSigner) Sign(_ []byte) ([]byte, error) { return []byte("sig"), nil }
 func (fixedSigner) Serialize() ([]byte, error)    { return []byte("identity"), nil }
 
-var ccID = &peer.ChaincodeID{Name: "mycc"}
+const testNamespace = "mycc"
 
 func endorse(t *testing.T, rws blocks.ReadWriteSet) *peer.ProposalResponse {
 	t.Helper()
@@ -31,7 +31,7 @@ func endorse(t *testing.T, rws blocks.ReadWriteSet) *peer.ProposalResponse {
 		TxID:         "txid",
 		ProposalHash: []byte("prophash"),
 		Args:         [][]byte{},
-		CCID:         ccID,
+		Namespace:    testNamespace,
 	}
 	resp, err := NewEndorsementBuilder(fixedSigner{}).Endorse(in, endorsement.ExecutionResult{RWS: rws})
 	if err != nil {
@@ -111,6 +111,37 @@ func TestEndorse_ReadAndWrite(t *testing.T) {
 	}
 	if len(kv.Writes) != 1 || kv.Writes[0].Key != "w" {
 		t.Errorf("unexpected writes: %+v", kv.Writes)
+	}
+}
+
+// TestEndorse_ChaincodeIDRoundTrips guards the reason Invocation kept
+// ChaincodeVersion as its own field instead of dropping it when CCID was
+// flattened: protoutil.GetBytesProposalResponsePayload embeds the whole
+// ChaincodeID into the committed ChaincodeAction, so a version silently
+// zeroed here would be wrong data on the Fabric ledger, not merely unused.
+func TestEndorse_ChaincodeIDRoundTrips(t *testing.T) {
+	in := endorsement.Invocation{
+		TxID:             "txid",
+		ProposalHash:     []byte("prophash"),
+		Args:             [][]byte{},
+		Namespace:        testNamespace,
+		ChaincodeVersion: "v1",
+	}
+	resp, err := NewEndorsementBuilder(fixedSigner{}).Endorse(in, endorsement.ExecutionResult{})
+	if err != nil {
+		t.Fatalf("Endorse failed: %v", err)
+	}
+
+	var prp peer.ProposalResponsePayload
+	if err := proto.Unmarshal(resp.Payload, &prp); err != nil {
+		t.Fatalf("unmarshal ProposalResponsePayload: %v", err)
+	}
+	var ca peer.ChaincodeAction
+	if err := proto.Unmarshal(prp.Extension, &ca); err != nil {
+		t.Fatalf("unmarshal ChaincodeAction: %v", err)
+	}
+	if ca.ChaincodeId == nil || ca.ChaincodeId.Name != testNamespace || ca.ChaincodeId.Version != "v1" {
+		t.Errorf("committed ChaincodeId did not round-trip: %+v", ca.ChaincodeId)
 	}
 }
 
