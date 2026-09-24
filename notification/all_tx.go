@@ -41,10 +41,10 @@ type AllTxBatch struct {
 // the blocks were received.
 //
 // HandleBatch does not run on the stream's receive goroutine: AllTxStreamer runs the
-// handler chain on a goroutine of its own and buffers up to AllTxQueueDepth batches
+// handler chain on a goroutine of its own and buffers up to DefaultQueueDepth batches
 // between the two, so a handler may take as long as a block's worth of work needs
 // without stalling the feed. A chain that is slower than the feed on average will
-// still fill that buffer and apply backpressure to the stream — see AllTxQueueDepth.
+// still fill that buffer and apply backpressure to the stream — see DefaultQueueDepth.
 type AllTxHandler interface {
 	HandleBatch(ctx context.Context, batch AllTxBatch) error
 }
@@ -92,7 +92,7 @@ type AllTxPeer interface {
 	StreamAllTransactions(ctx context.Context, req *StreamAllRequest, processor AllTxProcessor) error
 }
 
-// AllTxQueueDepth is how many committed-block batches AllTxStreamer buffers between
+// DefaultQueueDepth is how many committed-block batches AllTxStreamer buffers between
 // the stream's receive loop and the goroutine running the handler chain.
 //
 // The buffer absorbs bursts and the per-block variance of the handler chain; it is
@@ -100,7 +100,7 @@ type AllTxPeer interface {
 // until the handlers catch up. That backpressure is deliberate: StreamAllTransactions
 // has no historical replay, so a dropped batch could never be recovered, which makes
 // slowing the stream down the only safe response to a persistently slow handler.
-const AllTxQueueDepth = 64
+const DefaultQueueDepth = 64
 
 // AllTxStreamer subscribes to all committed transactions via the Fabric-X sidecar's
 // StreamAllTransactions RPC. It is the companion to Notifier: where Notifier tracks
@@ -125,10 +125,10 @@ type AllTxStreamer struct {
 // NewAllTxStreamer creates an AllTxStreamer that delivers committed transaction
 // batches to the registered handlers via the given peer.
 // queueDepth controls how many committed-block batches are buffered between the
-// stream's receive loop and the handler goroutine; pass 0 to use AllTxQueueDepth.
+// stream's receive loop and the handler goroutine; pass 0 to use DefaultQueueDepth.
 func NewAllTxStreamer(peer AllTxPeer, handlers []AllTxHandler, log sdk.Logger, queueDepth int) *AllTxStreamer {
 	if queueDepth <= 0 {
-		queueDepth = AllTxQueueDepth
+		queueDepth = DefaultQueueDepth
 	}
 	return &AllTxStreamer{peer: peer, handlers: handlers, log: log, queueDepth: queueDepth}
 }

@@ -194,7 +194,7 @@ func (p *deliveringPeer) StreamAllTransactions(ctx context.Context, _ *notificat
 // not stop the peer's receive loop from taking the blocks queued behind it. Before the
 // hand-off existed this test could not get past the first batch.
 func TestAllTxStreamer_ReceiveLoopNotBlockedByHandler(t *testing.T) {
-	const nBatches = 8 // below AllTxQueueDepth, so backpressure is not in play here
+	const nBatches = 8 // below DefaultQueueDepth, so backpressure is not in play here
 
 	peer := &deliveringPeer{nBatches: nBatches, accepted: make(chan uint64, nBatches)}
 
@@ -237,7 +237,7 @@ func TestAllTxStreamer_ReceiveLoopNotBlockedByHandler(t *testing.T) {
 // the handlers' pace rather than drop anything, and block order must survive. There is
 // no historical replay behind this feed, so a lost batch is lost for good.
 func TestAllTxStreamer_DrainsQueueInOrderUnderBackpressure(t *testing.T) {
-	nBatches := notification.AllTxQueueDepth + 10
+	nBatches := notification.DefaultQueueDepth + 10
 
 	batches := make([]notification.AllTxBatch, nBatches)
 	for i := range batches {
