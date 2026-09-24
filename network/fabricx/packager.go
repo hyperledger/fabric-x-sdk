@@ -9,6 +9,7 @@ package fabricx
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	b64 "encoding/base64"
 	"errors"
 	"fmt"
@@ -24,36 +25,40 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// envelopeNonceSize matches the convention used when the invocation itself was built
+// (endorsement/fabricx.nonceSize); the two nonces are otherwise unrelated.
+const envelopeNonceSize = 24
+
 // NewTxPackager returns a TxPackager that assembles Fabric-X transaction envelopes.
-func NewTxPackager() TxPackager {
-	return TxPackager{}
+//
+// Signer is only required if the orderer enforces the channel Writers policy on submitted requests
+// (fabric-x-orderer: General.ClientSignatureVerificationRequired). The SDK cannot detect that
+// setting: an unsigned envelope sent to such an orderer is rejected by the router only after Submit
+// has already returned nil.
+//
+// With a nil signer the envelopes carry no creator and no signature, which saves a certificate and
+// a signature per transaction.
+func NewTxPackager(signer sdk.Signer) TxPackager {
+	return TxPackager{signer: signer}
 }
 
-// TxPackager assembles a Fabric-X transaction envelope from an endorsement.
-type TxPackager struct{}
+// TxPackager assembles a Fabric-X transaction envelope from an endorsement, signed by the
+// submitting client if it has a signer. The zero value packages unsigned envelopes.
+type TxPackager struct {
+	signer sdk.Signer
+}
 
-// PackageTx combines the proposal and endorser responses into a Fabric-X envelope.
+// PackageTx combines the proposal and endorser responses into a Fabric-X envelope, signed if the
+// packager has a signer (General.ClientSignatureVerificationRequired=true on the orderer).
 func (p TxPackager) PackageTx(end sdk.Endorsement) (*common.Envelope, error) {
-	return CreateTx(end.Proposal, end.Responses...)
+	return CreateTx(end.Proposal, p.signer, end.Responses...)
 }
 
-// CreateTx is an adaptation of protoutil.CreateSignedTx,
-// tweaked to work with Fabric-X payloads. Fabric-X does not require the
-// submitting client to sign the envelope, so no signer is involved.
-func CreateTx(proposal *peer.Proposal, resps ...*peer.ProposalResponse) (*common.Envelope, error) {
+// CreateTx is an adaptation of protoutil.CreateSignedTx, tweaked to work with Fabric-X payloads.
+// It assembles an envelope from proposal and resps, signed by signer if it is not nil.
+func CreateTx(proposal *peer.Proposal, signer sdk.Signer, resps ...*peer.ProposalResponse) (*common.Envelope, error) {
 	if len(resps) == 0 {
 		return nil, errors.New("at least one proposal response is required")
-	}
-
-	// the original header
-	hdr, err := protoutil.UnmarshalHeader(proposal.Header)
-	if err != nil {
-		return nil, err
-	}
-
-	shdr, err := protoutil.UnmarshalSignatureHeader(hdr.SignatureHeader)
-	if err != nil {
-		return nil, err
 	}
 
 	// ensure that all actions are bitwise equal and that they are successful
@@ -121,24 +126,34 @@ func CreateTx(proposal *peer.Proposal, resps ...*peer.ProposalResponse) (*common
 		return nil, errors.New("can't marshal transaction payload")
 	}
 
-	// replace Fabric ENDORSER_PROPOSAL with Fabric-X MESSAGE
-	chdr, err := protoutil.UnmarshalChannelHeader(hdr.ChannelHeader)
-	if err != nil {
-		return nil, err
+	shdr := &common.SignatureHeader{}
+	if signer != nil {
+		creator, err := signer.Serialize()
+		if err != nil {
+			return nil, fmt.Errorf("serialize signer: %w", err)
+		}
+		nonce := make([]byte, envelopeNonceSize)
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, fmt.Errorf("read nonce: %w", err)
+		}
+		shdr.Creator, shdr.Nonce = creator, nonce
 	}
-	chdr.Type = int32(common.HeaderType_MESSAGE)
-	chdrBytes, err := proto.Marshal(chdr)
+	shdrBytes, err := proto.Marshal(shdr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshal signature header: %w", err)
 	}
 
-	shdr.Creator = nil
+	// the proposal's channel header (channel, tx id, timestamp) carries over unchanged.
+	hdr, err := protoutil.UnmarshalHeader(proposal.Header)
+	if err != nil {
+		return nil, err
+	}
 
 	// create the payload
 	payl := &common.Payload{
 		Header: &common.Header{
-			ChannelHeader:   chdrBytes,
-			SignatureHeader: protoutil.MarshalOrPanic(shdr),
+			ChannelHeader:   hdr.ChannelHeader,
+			SignatureHeader: shdrBytes,
 		},
 		Data: txBytes,
 	}
@@ -147,12 +162,24 @@ func CreateTx(proposal *peer.Proposal, resps ...*peer.ProposalResponse) (*common
 		return nil, err
 	}
 
-	// here's the envelope
-	return &common.Envelope{Payload: paylBytes}, nil
+	if signer == nil {
+		return &common.Envelope{Payload: paylBytes}, nil
+	}
+
+	// sign the payload bytes, as the orderer checks the signature over exactly these
+	sig, err := signer.Sign(paylBytes)
+	if err != nil {
+		return nil, fmt.Errorf("sign envelope payload: %w", err)
+	}
+	return &common.Envelope{Payload: paylBytes, Signature: sig}, nil
 }
 
 // NewSubmitter is a convenience constructor that wires together a Fabric-X TxPackager
 // and a Submitter for Fabric-X orderers.
-func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.Submitter, error) {
-	return network.NewSubmitter(ctx, orderers, NewTxPackager(), waitAfterSubmit, logger)
+//
+// The signer may be nil, in which case envelopes are unsigned. Pass one whenever the orderer verifies
+// client signatures (ClientSignatureVerificationRequired), which is a sensible production setting
+// because the orderer then enforces who may submit transactions. See NewTxPackager.
+func NewSubmitter(ctx context.Context, orderers []network.OrdererConf, signer sdk.Signer, waitAfterSubmit time.Duration, logger sdk.Logger) (*network.Submitter, error) {
+	return network.NewSubmitter(ctx, orderers, NewTxPackager(signer), waitAfterSubmit, logger)
 }

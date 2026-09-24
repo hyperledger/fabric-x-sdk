@@ -337,7 +337,9 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		if err != nil {
 			t.Fatalf("NewSynchronizer: %v", err)
 		}
-		submitter, err = nfabx.NewSubmitter(t.Context(), cfg.Orderers, 0, log)
+		// Sign the envelopes, as an orderer that verifies client signatures requires.
+		// Not verified in test committer or fabrictest.
+		submitter, err = nfabx.NewSubmitter(t.Context(), cfg.Orderers, signer, 0, log)
 	}
 	if err != nil {
 		t.Fatalf("NewSubmitter: %v", err)

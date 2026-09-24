@@ -85,7 +85,7 @@ func TestNewInvocation_NoChaincodeHeaderExtension(t *testing.T) {
 
 func TestNewInvocation_HeaderFields(t *testing.T) {
 	chdr, _ := headers(t, newInvocation(t))
-	if commonpb.HeaderType(chdr.Type) != commonpb.HeaderType_ENDORSER_TRANSACTION {
+	if commonpb.HeaderType(chdr.Type) != commonpb.HeaderType_MESSAGE {
 		t.Errorf("unexpected header type: %s", commonpb.HeaderType(chdr.Type))
 	}
 	if chdr.ChannelId != "mychannel" {
@@ -198,7 +198,7 @@ func TestNewInvocation_SufficientForPackaging(t *testing.T) {
 		t.Fatalf("Endorse failed: %v", err)
 	}
 
-	env, err := networkfabricx.CreateTx(inv.Proposal, resp)
+	env, err := networkfabricx.CreateTx(inv.Proposal, nil, resp)
 	if err != nil {
 		t.Fatalf("CreateTx failed on a header-only proposal: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestNewInvocation_SufficientForPackaging(t *testing.T) {
 		t.Errorf("unexpected envelope channel id: %q", chdr.ChannelId)
 	}
 	if commonpb.HeaderType(chdr.Type) != commonpb.HeaderType_MESSAGE {
-		t.Errorf("expected the packager to rewrite the type to MESSAGE, got %s", commonpb.HeaderType(chdr.Type))
+		t.Errorf("expected MESSAGE, got %s", commonpb.HeaderType(chdr.Type))
 	}
 }
 
@@ -261,7 +261,7 @@ func TestNewInvocation_TwoOfTwo(t *testing.T) {
 		t.Fatalf("endorsers disagree on the payload:\n org0 %x\n org1 %x", org0.Payload, org1.Payload)
 	}
 
-	env, err := networkfabricx.CreateTx(inv.Proposal, org0, org1)
+	env, err := networkfabricx.CreateTx(inv.Proposal, nil, org0, org1)
 	if err != nil {
 		t.Fatalf("CreateTx with two endorsements failed: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestNewInvocation_DivergentEndorsersRejected(t *testing.T) {
 		t.Fatalf("Endorse failed: %v", err)
 	}
 
-	if _, err := networkfabricx.CreateTx(inv.Proposal, org0, diverged); err == nil {
+	if _, err := networkfabricx.CreateTx(inv.Proposal, nil, org0, diverged); err == nil {
 		t.Fatal("expected CreateTx to reject endorsers that disagree on the payload")
 	}
 }
@@ -354,7 +354,7 @@ func TestNewInvocation_EmptyInputs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Endorse: %v", err)
 			}
-			if _, err := networkfabricx.CreateTx(inv.Proposal, resp); err != nil {
+			if _, err := networkfabricx.CreateTx(inv.Proposal, nil, resp); err != nil {
 				t.Fatalf("CreateTx: %v", err)
 			}
 		})
@@ -458,7 +458,7 @@ func TestNewInvocation_MustBeSharedAcrossEndorsers(t *testing.T) {
 	// The packager only catches the divergence when an event carries the tx id
 	// into the payload; without one the payloads match and it cannot.
 	withoutEvent := []*peer.ProposalResponse{endorseNoEvent(t, "org0", own0), endorseNoEvent(t, "org1", own1)}
-	if _, err := networkfabricx.CreateTx(own0.Proposal, withoutEvent...); err != nil {
+	if _, err := networkfabricx.CreateTx(own0.Proposal, nil, withoutEvent...); err != nil {
 		t.Logf("packager rejected mismatched invocations without an event: %v"+
 			" (it no longer has the blind spot this test documents)", err)
 	}

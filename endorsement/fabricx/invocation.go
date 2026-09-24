@@ -74,7 +74,7 @@ func (b InvocationBuilder) NewInvocation(channel, namespace, chaincodeVersion st
 	txID := protoutil.ComputeTxID(nonce, creator)
 
 	chdr, err := protoutil.Marshal(&commonpb.ChannelHeader{
-		Type:      int32(commonpb.HeaderType_ENDORSER_TRANSACTION),
+		Type:      int32(commonpb.HeaderType_MESSAGE),
 		TxId:      txID,
 		Timestamp: timestamppb.Now(),
 		ChannelId: channel,
