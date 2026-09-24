@@ -39,7 +39,7 @@ func NewSubmitter(ctx context.Context, config []OrdererConf, packager TxPackager
 
 	orderers := make([]*Orderer, len(config))
 	for i, cfg := range config {
-		if o, err := NewOrderer(ctx, cfg); err != nil {
+		if o, err := NewOrderer(ctx, cfg, logger); err != nil {
 			return nil, err
 		} else {
 			orderers[i] = o
@@ -55,7 +55,9 @@ func NewSubmitter(ctx context.Context, config []OrdererConf, packager TxPackager
 }
 
 // Submit to each of the registered orderers sequentially, returns an error if more than half errored.
-// Uses persistent streams with fire-and-forget sends for better performance.
+// Uses persistent streams with fire-and-forget sends for better performance: a nil return means
+// the envelope was sent, not that an orderer accepted it. A rejection is only logged, see
+// Orderer.Broadcast, so learn the outcome of a transaction from its commit event.
 func (s Submitter) Submit(ctx context.Context, end sdk.Endorsement) error {
 	env, err := s.packager.PackageTx(end)
 	if err != nil {

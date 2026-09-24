@@ -16,6 +16,7 @@ import (
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
+	sdk "github.com/hyperledger/fabric-x-sdk"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -28,7 +29,13 @@ type OrdererConf struct {
 }
 
 // NewOrderer dials an orderer and returns a client ready to broadcast transactions.
-func NewOrderer(ctx context.Context, c OrdererConf) (*Orderer, error) {
+// Replies to broadcasts that the orderer did not accept are logged at warn level to logger,
+// which may be nil to discard them.
+func NewOrderer(ctx context.Context, c OrdererConf, logger sdk.Logger) (*Orderer, error) {
+	if logger == nil {
+		logger = sdk.NoOpLogger{}
+	}
+
 	if err := c.TLS.Validate(); err != nil {
 		return nil, fmt.Errorf("orderer %s: invalid TLS config: %w", c.Address, err)
 	}
@@ -57,6 +64,7 @@ func NewOrderer(ctx context.Context, c OrdererConf) (*Orderer, error) {
 		conn:   conn,
 		client: orderer.NewAtomicBroadcastClient(conn),
 		addr:   c.Address,
+		logger: logger,
 	}, nil
 }
 
@@ -66,6 +74,7 @@ type Orderer struct {
 	conn   *grpc.ClientConn
 	client orderer.AtomicBroadcastClient
 	addr   string
+	logger sdk.Logger
 
 	mu           sync.Mutex
 	closed       bool
@@ -74,9 +83,14 @@ type Orderer struct {
 	stream       orderer.AtomicBroadcast_BroadcastClient
 }
 
-// Broadcast sends a signed envelope with an endorsed EndorserTransaction for ordering.
+// Broadcast sends an envelope with an endorsed EndorserTransaction for ordering.
 // Uses a persistent stream with automatic recreation on failure.
 // The context parameter is ignored - stream lifecycle is managed by the orderer's context.
+//
+// A nil return means the envelope was written to the stream, not that the orderer accepted it:
+// the orderer replies asynchronously, and a reply other than SUCCESS (for example a rejected
+// signature) is logged, not returned. Replies carry no transaction id and are not guaranteed to
+// arrive in the order the envelopes were sent, so they cannot be matched to a Broadcast call.
 func (o *Orderer) Broadcast(ctx context.Context, env *common.Envelope) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -122,12 +136,16 @@ func (o *Orderer) ensureStream() error {
 		return fmt.Errorf("open broadcast stream to %s: %w", o.addr, err)
 	}
 	o.stream = stream
-	cancel := o.streamCancel
+	cancel, logger, addr := o.streamCancel, o.logger, o.addr
 	go func() {
 		defer cancel()
 		for {
-			if _, err := stream.Recv(); err != nil {
+			resp, err := stream.Recv()
+			if err != nil {
 				return
+			}
+			if resp.GetStatus() != common.Status_SUCCESS {
+				logger.Warnf("orderer %s did not accept a broadcast: %s: %s", addr, resp.GetStatus(), resp.GetInfo())
 			}
 		}
 	}()
