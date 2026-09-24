@@ -18,7 +18,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/notification"
-	"google.golang.org/protobuf/proto"
 )
 
 // testCase is a backend-agnostic test function. The testSetup is shared across
@@ -394,14 +393,18 @@ func testInputArgsAndEvents(t *testing.T, s *testSetup) {
 	key := t.Name() + "/" + rand.Text()
 	args := [][]byte{[]byte("invoke"), []byte("arg1"), []byte("arg2")}
 	eventPayload := []byte(`{"type":"Transfer"}`)
+	eventName := "Transfer"
+	responsePayload := []byte("execution-result-payload")
 
 	inv := s.newInvocation(t, args)
 
 	var responses []*peer.ProposalResponse
 	for _, b := range s.builders {
-		resp, err := b.Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
+		res := endorsement.Success(blocks.ReadWriteSet{
 			Writes: []blocks.KVWrite{{Key: key, Value: []byte("v")}},
-		}, eventPayload, nil))
+		}, eventPayload, responsePayload)
+		res.EventName = eventName
+		resp, err := b.Endorse(inv, res)
 		if err != nil {
 			t.Fatalf("Endorse: %v", err)
 		}
@@ -431,16 +434,18 @@ func testInputArgsAndEvents(t *testing.T, s *testSetup) {
 		}
 	}
 
-	// events
-	if len(tx.Events) == 0 {
-		t.Fatal("Events: expected non-empty")
+	// event: identical on both backends; the Fabric parser unwraps the ChaincodeEvent.
+	if string(tx.Event) != string(eventPayload) {
+		t.Errorf("event: got %q, want %q", tx.Event, eventPayload)
 	}
-	evt := &peer.ChaincodeEvent{}
-	if err := proto.Unmarshal(tx.Events, evt); err != nil {
-		t.Fatalf("unmarshal Events: %v", err)
+	if tx.EventName != eventName {
+		t.Errorf("event name: got %q, want %q", tx.EventName, eventName)
 	}
-	if string(evt.Payload) != string(eventPayload) {
-		t.Errorf("event payload: got %q, want %q", evt.Payload, eventPayload)
+
+	// payload: the generic ExecutionResult.Payload channel, committed on both
+	// backends (ChaincodeAction.Response.Payload on Fabric, metadata[2] on Fabric-X).
+	if string(tx.Payload) != string(responsePayload) {
+		t.Errorf("payload: got %q, want %q", tx.Payload, responsePayload)
 	}
 }
 
@@ -590,7 +595,7 @@ func testStreamAllTransactions(t *testing.T, s *testSetup) {
 				if len(e.NsRWS) == 0 {
 					t.Errorf("expected namespaces to be populated (include_read_write_sets)")
 				}
-				if len(e.InputArgs) == 0 && len(e.Events) == 0 {
+				if len(e.InputArgs) == 0 && len(e.Event) == 0 {
 					t.Errorf("expected metadata to be populated (include_metadata)")
 				}
 				return

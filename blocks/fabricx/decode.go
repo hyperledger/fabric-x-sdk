@@ -7,24 +7,39 @@ SPDX-License-Identifier: Apache-2.0
 package fabricx
 
 import (
-	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-	"google.golang.org/protobuf/proto"
 )
 
-// DecodeMetadata extracts InputArgs and Events from the transaction metadata.
-func DecodeMetadata(metadata [][]byte) (inputArgs [][]byte, events []byte) {
-	if len(metadata) > 0 && len(metadata[0]) > 0 {
-		var input peer.ChaincodeInput
-		if err := proto.Unmarshal(metadata[0], &input); err == nil {
-			inputArgs = input.Args
+// Metadata is the SDK-defined content of a Fabric-X transaction's metadata.
+type Metadata struct {
+	Event     []byte
+	EventName string
+	Payload   []byte
+	InputArgs [][]byte
+}
+
+// DecodeMetadata extracts the event, event name, payload, and input args from the transaction metadata.
+// The layout is purely positional: metadata[0] = event, metadata[1] = event name,
+// metadata[2] = payload, metadata[3] = arg count (1 byte), metadata[4:4+count] = args.
+func DecodeMetadata(metadata [][]byte) Metadata {
+	var m Metadata
+	if len(metadata) > 0 {
+		m.Event = metadata[0]
+	}
+	if len(metadata) > 1 {
+		m.EventName = string(metadata[1])
+	}
+	if len(metadata) > 2 {
+		m.Payload = metadata[2]
+	}
+	if len(metadata) > 3 && len(metadata[3]) > 0 {
+		count := int(metadata[3][0])
+		if end := 4 + count; end <= len(metadata) {
+			m.InputArgs = metadata[4:end]
 		}
 	}
-	if len(metadata) > 1 && len(metadata[1]) > 0 {
-		events = metadata[1]
-	}
-	return inputArgs, events
+	return m
 }
 
 // DecodeNamespaces converts Fabric-X TxNamespace protos into the SDK's

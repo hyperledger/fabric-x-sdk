@@ -127,11 +127,10 @@ func TestEndorse_NsVersion(t *testing.T) {
 	}
 }
 
-// TestEndorse_MetadataFixedWidth guards against a regression where metadata
-// entries were only conditionally appended: an empty Args with a non-empty
-// Event produced a single-entry metadata slice, which DecodeMetadata's fixed
-// positions ([0]=args, [1]=events) would misread as input args instead of an
-// event. Metadata must always contain exactly two entries.
+// TestEndorse_MetadataFixedWidth ensures that the positions don't change.
+// [0]=event, [1]=event name, [2]=payload, [3]=arg count, [4:]=args.
+// Metadata must always contain exactly 4+len(args) entries, regardless of
+// which fields are empty.
 func TestEndorse_MetadataFixedWidth(t *testing.T) {
 	in := endorsement.Invocation{
 		TxID:         "txid",
@@ -139,7 +138,7 @@ func TestEndorse_MetadataFixedWidth(t *testing.T) {
 		Args:         nil,
 		Namespace:    testNamespace,
 	}
-	res := endorsement.ExecutionResult{Event: []byte("myevent")}
+	res := endorsement.ExecutionResult{Event: []byte("myevent"), Payload: []byte("mypayload")}
 
 	resp, err := NewEndorsementBuilder(fixedSigner{}).Endorse(in, res)
 	if err != nil {
@@ -150,24 +149,77 @@ func TestEndorse_MetadataFixedWidth(t *testing.T) {
 	if err := proto.Unmarshal(resp.Payload, &tx); err != nil {
 		t.Fatalf("unmarshal Tx: %v", err)
 	}
-	if len(tx.Metadata) != 2 {
-		t.Fatalf("expected exactly 2 metadata entries, got %d", len(tx.Metadata))
+	if len(tx.Metadata) != 4 {
+		t.Fatalf("expected exactly 4 metadata entries, got %d", len(tx.Metadata))
+	}
+	if string(tx.Metadata[0]) != "myevent" {
+		t.Errorf("expected event %q at metadata[0], got %q", "myevent", tx.Metadata[0])
+	}
+	// no EventName set, so the default applies, matching the Fabric builder
+	if string(tx.Metadata[1]) != endorsement.DefaultEventName {
+		t.Errorf("expected event name %q at metadata[1], got %q", endorsement.DefaultEventName, tx.Metadata[1])
+	}
+	if string(tx.Metadata[2]) != "mypayload" {
+		t.Errorf("expected payload %q at metadata[2], got %q", "mypayload", tx.Metadata[2])
+	}
+	if len(tx.Metadata[3]) != 1 || tx.Metadata[3][0] != 0 {
+		t.Errorf("expected arg count 0 at metadata[3], got %v", tx.Metadata[3])
+	}
+}
+
+// TestEndorse_Args guards the count-byte positional layout for a non-empty
+// Args: metadata must carry the count at [3] followed by each arg unpacked,
+// one per entry, at [4:].
+func TestEndorse_Args(t *testing.T) {
+	in := endorsement.Invocation{
+		TxID:         "txid",
+		ProposalHash: []byte("prophash"),
+		Args:         [][]byte{[]byte("a"), []byte("b"), []byte("c")},
+		Namespace:    testNamespace,
 	}
 
-	var input peer.ChaincodeInput
-	if err := proto.Unmarshal(tx.Metadata[0], &input); err != nil {
-		t.Fatalf("unmarshal ChaincodeInput: %v", err)
-	}
-	if len(input.Args) != 0 {
-		t.Errorf("expected no input args, got %v", input.Args)
+	resp, err := NewEndorsementBuilder(fixedSigner{}).Endorse(in, endorsement.ExecutionResult{})
+	if err != nil {
+		t.Fatalf("Endorse failed: %v", err)
 	}
 
-	var event peer.ChaincodeEvent
-	if err := proto.Unmarshal(tx.Metadata[1], &event); err != nil {
-		t.Fatalf("unmarshal ChaincodeEvent: %v", err)
+	var tx applicationpb.Tx
+	if err := proto.Unmarshal(resp.Payload, &tx); err != nil {
+		t.Fatalf("unmarshal Tx: %v", err)
 	}
-	if string(event.Payload) != "myevent" {
-		t.Errorf("expected event payload %q, got %q", "myevent", event.Payload)
+	if len(tx.Metadata) != 7 {
+		t.Fatalf("expected exactly 7 metadata entries (4 + 3 args), got %d", len(tx.Metadata))
+	}
+	if len(tx.Metadata[1]) != 0 {
+		t.Errorf("expected no event name at metadata[1] without an event, got %q", tx.Metadata[1])
+	}
+	if len(tx.Metadata[3]) != 1 || tx.Metadata[3][0] != 3 {
+		t.Fatalf("expected arg count 3 at metadata[3], got %v", tx.Metadata[3])
+	}
+	for i, want := range in.Args {
+		if string(tx.Metadata[4+i]) != string(want) {
+			t.Errorf("arg %d: got %q, want %q", i, tx.Metadata[4+i], want)
+		}
+	}
+}
+
+// TestEndorse_TooManyArgs guards the 255-entry ceiling the count byte can
+// express: Endorse must error rather than silently truncate.
+func TestEndorse_TooManyArgs(t *testing.T) {
+	args := make([][]byte, 256)
+	for i := range args {
+		args[i] = []byte("x")
+	}
+	in := endorsement.Invocation{
+		TxID:         "txid",
+		ProposalHash: []byte("prophash"),
+		Args:         args,
+		Namespace:    testNamespace,
+	}
+
+	_, err := NewEndorsementBuilder(fixedSigner{}).Endorse(in, endorsement.ExecutionResult{})
+	if err == nil {
+		t.Fatal("expected an error for more than 255 args, got nil")
 	}
 }
 

@@ -19,9 +19,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// eventKey and inputKey mirror the constants in endorsement/fabricx.
-// Both sides of the wire format independently own these definitions.
-
 // NewBlockParser returns a BlockParser that decodes Fabric-X blocks.
 func NewBlockParser(log sdk.Logger) BlockParser {
 	return BlockParser{log: log}
@@ -101,11 +98,13 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 		return nil, fmt.Errorf("transaction: %w", err)
 	}
 
-	inputArgs, events := DecodeMetadata(ptx.Metadata)
+	md := DecodeMetadata(ptx.Metadata)
 	tx := &blocks.Transaction{
 		ID:        chdr.TxId,
-		InputArgs: inputArgs,
-		Events:    events,
+		InputArgs: md.InputArgs,
+		Event:     md.Event,
+		EventName: md.EventName,
+		Payload:   md.Payload,
 		NsRWS:     DecodeNamespaces(ptx.Namespaces),
 	}
 

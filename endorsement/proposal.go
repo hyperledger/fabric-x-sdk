@@ -54,12 +54,30 @@ type ExecutionResult struct {
 	RWS blocks.ReadWriteSet
 	// Event is an optional opaque payload that was emitted as a chaincode event.
 	Event []byte
+	// EventName is the name of the event. It defaults to DefaultEventName when
+	// Event is set and EventName is empty.
+	EventName string
 	// Status is a code that should follow the HTTP status codes.
 	Status int32
 	//Message associated with the response code.
 	Message string
 	// Payload that can be used to include metadata with this response.
 	Payload []byte
+}
+
+// DefaultEventName is the event name used when an ExecutionResult has an Event but no EventName.
+const DefaultEventName = "event"
+
+// EventNameOrDefault returns EventName, DefaultEventName if Event is set without a name,
+// or "" if there is no event at all.
+func (res ExecutionResult) EventNameOrDefault() string {
+	if res.EventName != "" {
+		return res.EventName
+	}
+	if len(res.Event) > 0 {
+		return DefaultEventName
+	}
+	return ""
 }
 
 func (res ExecutionResult) Response() *peer.Response {

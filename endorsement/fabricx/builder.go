@@ -19,6 +19,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// maxArgs is the largest arg count the single count byte in metadata can express.
+const maxArgs = 255
+
 // NewEndorsementBuilder returns an EndorsementBuilder that produces Fabric-X-format signed responses.
 func NewEndorsementBuilder(signer sdk.Signer) EndorsementBuilder {
 	return EndorsementBuilder{signer: signer}
@@ -32,32 +35,16 @@ type EndorsementBuilder struct {
 // Endorse generates a signed proposal response based on the invocation and execution result.
 // It follows the Fabric-X transaction and signature format, wrapped in a Fabric envelope.
 func (e EndorsementBuilder) Endorse(inv endorsement.Invocation, res endorsement.ExecutionResult) (*peer.ProposalResponse, error) {
-	// Metadata is always exactly two entries, [0] = input args, [1] = events,
-	// so DecodeMetadata's fixed positions never drift when one of them is absent.
-	var inputBytes []byte
-	if len(inv.Args) > 0 {
-		var err error
-		inputBytes, err = proto.Marshal(&peer.ChaincodeInput{Args: inv.Args})
-		if err != nil {
-			return nil, fmt.Errorf("marshal input: %w", err)
-		}
+	argCount := len(inv.Args)
+	if argCount > maxArgs {
+		return nil, fmt.Errorf("too many args: %d exceeds the %d-arg metadata limit", argCount, maxArgs)
 	}
 
-	var eventBytes []byte
-	if len(res.Event) > 0 {
-		var err error
-		eventBytes, err = proto.Marshal(&peer.ChaincodeEvent{
-			Payload:     res.Event,
-			ChaincodeId: inv.Namespace,
-			TxId:        inv.TxID,
-			EventName:   "log",
-		})
-		if err != nil {
-			return nil, fmt.Errorf("marshal events: %w", err)
-		}
-	}
-
-	metadata := [][]byte{inputBytes, eventBytes}
+	// Metadata is positional: [0] = event, [1] = event name, [2] = payload, [3] = arg count,
+	// [4:] = args. See DecodeMetadata.
+	metadata := make([][]byte, 0, 4+argCount)
+	metadata = append(metadata, res.Event, []byte(res.EventNameOrDefault()), res.Payload, []byte{byte(argCount)})
+	metadata = append(metadata, inv.Args...)
 
 	tx := buildTx(res.RWS, inv.Namespace, inv.NsVersion, metadata)
 	prpBytes, err := proto.Marshal(tx)

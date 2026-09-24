@@ -16,7 +16,7 @@ import (
 )
 
 // CommittedTxEvent is a single transaction event received from StreamAllTransactions.
-// It embeds blocks.Transaction, so InputArgs/Events/NsRWS are populated only
+// It embeds blocks.Transaction, so InputArgs/Event/EventName/Payload/NsRWS are populated only
 // when IncludeMetadata/IncludeReadWriteSets were set in the StreamAllRequest,
 // and Status/RawCode/Reason/Valid always reflect the event's outcome.
 type CommittedTxEvent struct {
@@ -81,7 +81,7 @@ type StreamAllRequest struct {
 	// IncludeEndorsements requests that Endorsements be populated on each
 	// CommittedTxEvent.
 	IncludeEndorsements bool
-	// IncludeMetadata requests that InputArgs and Events be populated on each
+	// IncludeMetadata requests that InputArgs, Event, EventName and Payload be populated on each
 	// CommittedTxEvent.
 	IncludeMetadata bool
 }

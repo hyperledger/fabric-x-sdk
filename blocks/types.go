@@ -75,7 +75,11 @@ type Transaction struct {
 	Status    Status
 	RawCode   int32
 	Reason    string
-	Events    []byte
+	// Event is the payload of the chaincode event emitted by the transaction, if any.
+	// A transaction emits at most one event.
+	Event     []byte
+	EventName string
+	Payload   []byte
 	NsRWS     []NsReadWriteSet
 }
 

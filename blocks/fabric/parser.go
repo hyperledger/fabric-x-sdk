@@ -135,7 +135,17 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 	if err := proto.Unmarshal(prp.Extension, ccAct); err != nil {
 		return nil, fmt.Errorf("chaincode action: %w", err)
 	}
-	tx.Events = ccAct.Events
+	if len(ccAct.Events) > 0 {
+		evt := &peer.ChaincodeEvent{}
+		if err := proto.Unmarshal(ccAct.Events, evt); err != nil {
+			return nil, fmt.Errorf("chaincode event: %w", err)
+		}
+		tx.Event = evt.Payload
+		tx.EventName = evt.EventName
+	}
+	if ccAct.Response != nil {
+		tx.Payload = ccAct.Response.Payload
+	}
 
 	// read/write set
 	txRWSet := &rwset.TxReadWriteSet{}
