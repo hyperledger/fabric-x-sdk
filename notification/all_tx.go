@@ -116,15 +116,21 @@ const AllTxQueueDepth = 64
 // It does not support starting from a past block number. For full history or
 // world-state synchronisation, use network.Synchronizer instead.
 type AllTxStreamer struct {
-	peer     AllTxPeer
-	handlers []AllTxHandler
-	log      sdk.Logger
+	peer       AllTxPeer
+	handlers   []AllTxHandler
+	log        sdk.Logger
+	queueDepth int
 }
 
 // NewAllTxStreamer creates an AllTxStreamer that delivers committed transaction
 // batches to the registered handlers via the given peer.
-func NewAllTxStreamer(peer AllTxPeer, handlers []AllTxHandler, log sdk.Logger) *AllTxStreamer {
-	return &AllTxStreamer{peer: peer, handlers: handlers, log: log}
+// queueDepth controls how many committed-block batches are buffered between the
+// stream's receive loop and the handler goroutine; pass 0 to use AllTxQueueDepth.
+func NewAllTxStreamer(peer AllTxPeer, handlers []AllTxHandler, log sdk.Logger, queueDepth int) *AllTxStreamer {
+	if queueDepth <= 0 {
+		queueDepth = AllTxQueueDepth
+	}
+	return &AllTxStreamer{peer: peer, handlers: handlers, log: log, queueDepth: queueDepth}
 }
 
 // Stream opens the StreamAllTransactions server-stream and drives handlers until
@@ -141,7 +147,7 @@ func (s *AllTxStreamer) Stream(ctx context.Context, req *StreamAllRequest) error
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	queue := make(chan AllTxBatch, AllTxQueueDepth)
+	queue := make(chan AllTxBatch, s.queueDepth)
 
 	handlerDone := make(chan struct{})
 	var handlerErr error
@@ -153,7 +159,7 @@ func (s *AllTxStreamer) Stream(ctx context.Context, req *StreamAllRequest) error
 		cancel()
 	}()
 
-	processor := &allTxQueue{batches: queue, done: streamCtx.Done(), log: s.log}
+	processor := &allTxQueue{batches: queue, done: streamCtx.Done(), log: s.log, queueDepth: s.queueDepth}
 	streamErr := s.peer.StreamAllTransactions(streamCtx, req, processor)
 
 	// The receive loop has returned, so by the AllTxProcessor contract nothing can
@@ -210,8 +216,9 @@ type allTxQueue struct {
 	// done is closed when the stream is being torn down, by Stream's caller or by the
 	// handler goroutine after a handler error. Without it an enqueue onto a full queue
 	// would block forever once nothing is draining it.
-	done <-chan struct{}
-	log  sdk.Logger
+	done       <-chan struct{}
+	log        sdk.Logger
+	queueDepth int
 }
 
 // ProcessBatch implements AllTxProcessor by handing the batch to the handler
@@ -226,7 +233,7 @@ func (q *allTxQueue) ProcessBatch(ctx context.Context, batch AllTxBatch) error {
 	// Full queue: the handler chain is not keeping up with the feed, so from here the
 	// stream runs at the handlers' pace. Worth saying out loud — it is the one case
 	// where a slow handler is visible as sidecar-side backpressure.
-	q.log.Warnf("all-tx queue full (%d batches) at block %d: waiting for handlers", AllTxQueueDepth, batch.BlockNumber)
+	q.log.Warnf("all-tx queue full (%d batches) at block %d: waiting for handlers", q.queueDepth, batch.BlockNumber)
 
 	select {
 	case q.batches <- batch:

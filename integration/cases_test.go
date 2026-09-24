@@ -542,7 +542,7 @@ func testStreamAllTransactions(t *testing.T, s *testSetup) {
 	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: responses}
 
 	received := make(chan notification.AllTxBatch, 10)
-	streamer := notification.NewAllTxStreamer(s.peer, []notification.AllTxHandler{&allTxCapture{batches: received}}, sdk.NewTestLogger(t, "alltx"))
+	streamer := notification.NewAllTxStreamer(s.peer, []notification.AllTxHandler{&allTxCapture{batches: received}}, sdk.NewTestLogger(t, "alltx"), 0)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
