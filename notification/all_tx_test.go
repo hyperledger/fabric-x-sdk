@@ -68,7 +68,7 @@ func TestAllTxStreamer_DeliversBatchesToHandlers(t *testing.T) {
 
 	peer := &mockAllTxPeer{batches: batches}
 	handler := &mockAllTxHandler{}
-	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{handler}, sdk.NewTestLogger(t, "test"))
+	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{handler}, sdk.NewTestLogger(t, "test"), 0)
 
 	req := &notification.StreamAllRequest{}
 	if err := streamer.Stream(context.Background(), req); err != nil {
@@ -100,7 +100,7 @@ func TestAllTxStreamer_MultipleHandlers(t *testing.T) {
 	peer := &mockAllTxPeer{batches: batches}
 	h1 := &mockAllTxHandler{}
 	h2 := &mockAllTxHandler{}
-	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{h1, h2}, sdk.NewTestLogger(t, "test"))
+	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{h1, h2}, sdk.NewTestLogger(t, "test"), 0)
 
 	if err := streamer.Stream(context.Background(), &notification.StreamAllRequest{}); err != nil {
 		t.Fatalf("Stream failed: %v", err)
@@ -120,7 +120,7 @@ func TestAllTxStreamer_HandlerErrorStopsProcessing(t *testing.T) {
 	handlerErr := errors.New("handler failure")
 	peer := &mockAllTxPeer{batches: batches}
 	h := &mockAllTxHandler{err: handlerErr}
-	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{h}, sdk.NewTestLogger(t, "test"))
+	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{h}, sdk.NewTestLogger(t, "test"), 0)
 
 	err := streamer.Stream(context.Background(), &notification.StreamAllRequest{})
 	if err == nil {
@@ -138,7 +138,7 @@ func TestAllTxStreamer_HandlerErrorStopsProcessing(t *testing.T) {
 
 func TestAllTxStreamer_RequestPassedToPeer(t *testing.T) {
 	peer := &mockAllTxPeer{}
-	streamer := notification.NewAllTxStreamer(peer, nil, sdk.NewTestLogger(t, "test"))
+	streamer := notification.NewAllTxStreamer(peer, nil, sdk.NewTestLogger(t, "test"), 0)
 
 	req := &notification.StreamAllRequest{
 		FilterNamespaces:     []string{"mycc"},
@@ -155,7 +155,7 @@ func TestAllTxStreamer_RequestPassedToPeer(t *testing.T) {
 func TestAllTxStreamer_PeerErrorPropagates(t *testing.T) {
 	peerErr := errors.New("stream broken")
 	peer := &mockAllTxPeer{err: peerErr}
-	streamer := notification.NewAllTxStreamer(peer, nil, sdk.NewTestLogger(t, "test"))
+	streamer := notification.NewAllTxStreamer(peer, nil, sdk.NewTestLogger(t, "test"), 0)
 
 	err := streamer.Stream(context.Background(), &notification.StreamAllRequest{})
 	if !errors.Is(err, peerErr) {
@@ -194,7 +194,7 @@ func (p *deliveringPeer) StreamAllTransactions(ctx context.Context, _ *notificat
 // not stop the peer's receive loop from taking the blocks queued behind it. Before the
 // hand-off existed this test could not get past the first batch.
 func TestAllTxStreamer_ReceiveLoopNotBlockedByHandler(t *testing.T) {
-	const nBatches = 8 // below AllTxQueueDepth, so backpressure is not in play here
+	const nBatches = 8 // below DefaultQueueDepth, so backpressure is not in play here
 
 	peer := &deliveringPeer{nBatches: nBatches, accepted: make(chan uint64, nBatches)}
 
@@ -209,7 +209,7 @@ func TestAllTxStreamer_ReceiveLoopNotBlockedByHandler(t *testing.T) {
 		return nil
 	})
 
-	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{handler}, sdk.NewTestLogger(t, "test"))
+	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{handler}, sdk.NewTestLogger(t, "test"), 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -237,7 +237,7 @@ func TestAllTxStreamer_ReceiveLoopNotBlockedByHandler(t *testing.T) {
 // the handlers' pace rather than drop anything, and block order must survive. There is
 // no historical replay behind this feed, so a lost batch is lost for good.
 func TestAllTxStreamer_DrainsQueueInOrderUnderBackpressure(t *testing.T) {
-	nBatches := notification.AllTxQueueDepth + 10
+	nBatches := notification.DefaultQueueDepth + 10
 
 	batches := make([]notification.AllTxBatch, nBatches)
 	for i := range batches {
@@ -254,7 +254,7 @@ func TestAllTxStreamer_DrainsQueueInOrderUnderBackpressure(t *testing.T) {
 	})
 
 	peer := &mockAllTxPeer{batches: batches}
-	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{handler}, sdk.NewTestLogger(t, "test"))
+	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{handler}, sdk.NewTestLogger(t, "test"), 0)
 
 	if err := streamer.Stream(context.Background(), &notification.StreamAllRequest{}); err != nil {
 		t.Fatalf("Stream failed: %v", err)
