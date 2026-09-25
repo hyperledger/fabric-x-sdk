@@ -80,6 +80,7 @@ type BlockProcessor interface {
 
 // SubscribeBlocks connects to the peer DeliverWithPrivateData service and streams blocks
 // from the given starting block number, invoking the provided handler for each block.
+// signer may be nil for Fabric-X, but not for Fabric.
 func (p *Peer) SubscribeBlocks(ctx context.Context, channel string, startBlock uint64, signer sdk.Signer, processor BlockProcessor) error {
 	deliverClient := peer.NewDeliverClient(p.conn)
 
@@ -136,11 +137,16 @@ type PeerConf struct {
 	TLS     TLSConfig
 }
 
-// newDeliverSeekInfo returns a signed envelope that can be used to subscribe to a peer
+// newDeliverSeekInfo returns an envelope that can be used to subscribe to a peer, signed if
+// submitter is not nil.
 func newDeliverSeekInfo(submitter sdk.Signer, channel string, startBlock uint64) (*common.Envelope, error) {
-	signer, err := submitter.Serialize()
-	if err != nil {
-		return nil, err
+	var creator []byte
+	if submitter != nil {
+		var err error
+		creator, err = submitter.Serialize()
+		if err != nil {
+			return nil, err
+		}
 	}
 	tm := timestamppb.Now()
 	tm.Nanos = 0
@@ -154,7 +160,7 @@ func newDeliverSeekInfo(submitter sdk.Signer, channel string, startBlock uint64)
 		return nil, fmt.Errorf("marshal channel header: %w", err)
 	}
 	sigHeader, err := proto.Marshal(&common.SignatureHeader{
-		Creator: signer, Nonce: mustNonce(),
+		Creator: creator, Nonce: mustNonce(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal signature header: %w", err)
@@ -186,15 +192,15 @@ func newDeliverSeekInfo(submitter sdk.Signer, channel string, startBlock uint64)
 		return nil, fmt.Errorf("marshal payload: %w", err)
 	}
 
-	sig, err := submitter.Sign(payload)
-	if err != nil {
-		return nil, fmt.Errorf("sign payload: %w", err)
+	env := &common.Envelope{Payload: payload}
+	if submitter != nil {
+		sig, err := submitter.Sign(payload)
+		if err != nil {
+			return nil, fmt.Errorf("sign payload: %w", err)
+		}
+		env.Signature = sig
 	}
-
-	return &common.Envelope{
-		Payload:   payload,
-		Signature: sig,
-	}, nil
+	return env, nil
 }
 
 // mustNonce generates 24 random bytes to be used as a nonce.

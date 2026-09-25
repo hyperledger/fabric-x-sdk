@@ -61,11 +61,11 @@ There are three complementary mechanisms for receiving committed transaction dat
 
 | Mechanism | When to use |
 | --------- | ----------- |
-| `network.Synchronizer` | Maintain a local world state or full block history. Supports catch-up from any block height, reconnection, and liveness/readiness probes. Requires a signer. |
+| `network.Synchronizer` | Maintain a local world state or full block history. Supports catch-up from any block height, reconnection, and liveness/readiness probes. Needs a signer on classic Fabric, but not on Fabric-X. |
 | `notification.Notifier` | Know when a transaction *you* submitted commits or fails. Opens a bidirectional stream; you push txIDs to watch and receive back their status. |
 | `notification.AllTxStreamer` | React to *all* committed transactions (optionally filtered by namespace or status). Real-time feed only — no historical replay. Useful for audit logs, analytics, secondary indexes, or watching activity from other participants. |
 
-All three can be used independently and composed in the same application. Both `Notifier` and `AllTxStreamer` are backed by the Fabric-X sidecar's Notification Service and require no signer.
+All three can be used independently and composed in the same application. `Notifier` and `AllTxStreamer` are backed by the Fabric-X sidecar's Notification Service and require no signer. `fabricx.NewSynchronizer`/`fabricx.NewPeer` take no signer either: the committer sidecar does not verify the Deliver request's signature today. On classic Fabric the peer's Deliver typically enforces a channel Readers policy, so `fabric.NewSynchronizer`/`fabric.NewPeer` require one.
 
 ---
 

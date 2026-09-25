@@ -24,7 +24,14 @@ import (
 )
 
 // NewPeer dials a classic Fabric peer and binds it to the given channel and signer.
+//
+// Signer identifies the caller in every ProcessProposal and BlockHeight send, and a Fabric peer's
+// Deliver typically enforces a channel Readers policy on SubscribeBlocks's seek request.
 func NewPeer(conf network.PeerConf, channel string, signer sdk.Signer) (*Peer, error) {
+	if signer == nil {
+		return nil, errors.New("signer is required")
+	}
+
 	peer, err := network.NewPeer(conf)
 	if err != nil {
 		return nil, err

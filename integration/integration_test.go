@@ -324,7 +324,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	case "fabric-x":
 		builder = efabx.NewEndorsementBuilder(signer)
 		invocations = efabx.NewInvocationBuilder(signer)
-		fxPeer, err = nfabx.NewPeer(cfg.Peer, cfg.Channel, signer)
+		fxPeer, err = nfabx.NewPeer(cfg.Peer, cfg.Channel)
 		if err != nil {
 			t.Fatalf("NewPeer: %v", err)
 		}

@@ -22,25 +22,27 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// NewPeer dials a Fabric-X committer sidecar and binds it to the given channel and signer.
-func NewPeer(conf network.PeerConf, channel string, signer sdk.Signer) (*Peer, error) {
+// NewPeer dials a Fabric-X committer sidecar and binds it to the given channel.
+//
+// It takes no signer: the sidecar does not verify the signature of the Deliver request
+// SubscribeBlocks makes, so that request is sent unsigned. Restrict access with conf.TLS (mTLS).
+func NewPeer(conf network.PeerConf, channel string) (*Peer, error) {
 	peer, err := network.NewPeer(conf)
 	if err != nil {
 		return nil, err
 	}
-	return &Peer{Peer: peer, channel: channel, signer: signer}, nil
+	return &Peer{Peer: peer, channel: channel}, nil
 }
 
 // Peer is a channel-bound client for a Fabric-X committer sidecar.
 type Peer struct {
 	*network.Peer
 	channel string
-	signer  sdk.Signer
 }
 
 // SubscribeBlocks streams blocks from startBlock, invoking processor for each one.
 func (p *Peer) SubscribeBlocks(ctx context.Context, startBlock uint64, processor network.BlockProcessor) error {
-	return p.Peer.SubscribeBlocks(ctx, p.channel, startBlock, p.signer, processor)
+	return p.Peer.SubscribeBlocks(ctx, p.channel, startBlock, nil, processor)
 }
 
 // BlockHeight returns the current block height from the committer's BlockQueryService.
@@ -266,8 +268,8 @@ func convertNotificationResponse(res *committerpb.NotificationResponse) []notifi
 //
 // For a real-time feed of committed transactions without world-state maintenance,
 // use notification.AllTxStreamer with the same Peer instead.
-func NewSynchronizer(db network.BlockHeightReader, channel string, conf network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
-	peer, err := NewPeer(conf, channel, signer)
+func NewSynchronizer(db network.BlockHeightReader, channel string, conf network.PeerConf, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
+	peer, err := NewPeer(conf, channel)
 	if err != nil {
 		return nil, err
 	}
