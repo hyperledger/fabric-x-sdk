@@ -7,11 +7,17 @@ SPDX-License-Identifier: Apache-2.0
 package fabrictest
 
 import (
+	"bytes"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	sdk "github.com/hyperledger/fabric-x-sdk"
+	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/blocks/fabricx"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -324,5 +330,94 @@ func TestFilterNamespaces(t *testing.T) {
 	matching, touched = filterNamespaces(all, []string{"nope"})
 	if touched || len(matching) != 0 {
 		t.Errorf("expected no match, got matching=%+v touched=%v", matching, touched)
+	}
+}
+
+// txWithNamespaces returns a Tx that reads and writes in each of the given namespaces.
+func txWithNamespaces(names ...string) *applicationpb.Tx {
+	version := uint64(3)
+	tx := &applicationpb.Tx{}
+	for _, name := range names {
+		tx.Namespaces = append(tx.Namespaces, &applicationpb.TxNamespace{
+			NsId:        name,
+			ReadsOnly:   []*applicationpb.Read{{Key: []byte("r-" + name)}},
+			ReadWrites:  []*applicationpb.ReadWrite{{Key: []byte("rw-" + name), Value: []byte("v"), Version: &version}},
+			BlindWrites: []*applicationpb.Write{{Key: []byte("bw-" + name), Value: []byte("v")}},
+		})
+	}
+	return tx
+}
+
+// TestNamespaceFilterMatchesBlockParser pins the delivery path to the notification
+// path. Applications may feed both into the same handler chain, so for any block and
+// namespace filter, fabricx.BlockParser (what the Synchronizer uses) must produce the
+// same transactions, with the same read/write sets, as StreamAllTransactions with
+// FilterNamespaces (which the committer implements and buildTxEventBatch mirrors).
+func TestNamespaceFilterMatchesBlockParser(t *testing.T) {
+	envs := []*common.Envelope{
+		buildEnvelope(t, "tx-foreign", common.HeaderType_MESSAGE, txWithNamespaces("other")),
+		buildEnvelope(t, "tx-mixed", common.HeaderType_MESSAGE, txWithNamespaces("other", "ns1", "ns2")),
+		buildEnvelope(t, "cfg", common.HeaderType_CONFIG, txWithNamespaces("ns1")),
+		buildEnvelope(t, "tx-ns1", common.HeaderType_MESSAGE, txWithNamespaces("ns1")),
+		buildEnvelope(t, "tx-ns2", common.HeaderType_MESSAGE, txWithNamespaces("ns2")),
+		buildEnvelope(t, "tx-ns2-ns1", common.HeaderType_MESSAGE, txWithNamespaces("ns2", "ns1")),
+		buildEnvelope(t, "tx-empty", common.HeaderType_MESSAGE, &applicationpb.Tx{}),
+	}
+	txFilter := bytes.Repeat([]byte{byte(committerpb.Status_COMMITTED)}, len(envs))
+	block := buildTestBlock(t, 7, envs, txFilter)
+
+	tests := []struct {
+		name    string
+		filter  []string
+		wantIDs []string // guards against both paths agreeing on nothing
+	}{
+		{"no filter", nil, []string{"tx-foreign", "tx-mixed", "tx-ns1", "tx-ns2", "tx-ns2-ns1", "tx-empty"}},
+		{"one namespace", []string{"ns1"}, []string{"tx-mixed", "tx-ns1", "tx-ns2-ns1"}},
+		{"several namespaces", []string{"ns2", "ns1"}, []string{"tx-mixed", "tx-ns1", "tx-ns2", "tx-ns2-ns1"}},
+		{"listed and unlisted namespace", []string{"ns2", "absent"}, []string{"tx-mixed", "tx-ns2", "tx-ns2-ns1"}},
+		{"no match", []string{"absent"}, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// what a transaction looks like to a handler, whichever way it got there
+			type view struct {
+				ID    string
+				Num   int64
+				NsRWS []blocks.NsReadWriteSet
+			}
+
+			// notification path, decoded like network/fabricx does for a TxEventBatch
+			var notified []view
+			batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{
+				FilterNamespaces:     tc.filter,
+				IncludeReadWriteSets: true,
+			})
+			if batch != nil {
+				for _, e := range batch.Events {
+					notified = append(notified, view{e.Ref.TxId, int64(e.Ref.TxNum), fabricx.DecodeNamespaces(e.Namespaces)})
+				}
+			}
+
+			// delivery path
+			parsed, err := fabricx.NewBlockParser(sdk.NoOpLogger{}, tc.filter).Parse(block)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var delivered []view
+			for _, tx := range parsed.Transactions {
+				delivered = append(delivered, view{tx.ID, tx.Number, tx.NsRWS})
+			}
+
+			var ids []string
+			for _, v := range delivered {
+				ids = append(ids, v.ID)
+			}
+			if !slices.Equal(ids, tc.wantIDs) {
+				t.Errorf("delivered tx IDs: got %v, want %v", ids, tc.wantIDs)
+			}
+			if !reflect.DeepEqual(delivered, notified) {
+				t.Errorf("delivery and notification paths differ:\n delivered: %+v\n notified:  %+v", delivered, notified)
+			}
+		})
 	}
 }

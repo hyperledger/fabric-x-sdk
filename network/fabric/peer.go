@@ -86,7 +86,12 @@ func (p *Peer) BlockHeight(ctx context.Context) (uint64, error) {
 
 // NewSynchronizer creates a Synchronizer that fetches classic Fabric blocks and dispatches
 // them to the provided handlers using the Fabric block format.
-func NewSynchronizer(db network.BlockHeightReader, channel string, conf network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
+//
+// If namespaces is non-empty, handlers only see transactions that touch at least one of
+// them, and only the read/write sets of those namespaces. Blocks are always delivered,
+// possibly without transactions, so handlers can keep track of the block height. A nil
+// or empty namespaces passes every transaction on the channel.
+func NewSynchronizer(db network.BlockHeightReader, channel string, namespaces []string, conf network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
 	peer, err := NewPeer(conf, channel, signer)
 	if err != nil {
 		return nil, err
@@ -95,7 +100,7 @@ func NewSynchronizer(db network.BlockHeightReader, channel string, conf network.
 	return network.NewSynchronizer(
 		db,
 		peer,
-		blocks.NewProcessor(fabric.NewBlockParser(logger), handlers),
+		blocks.NewProcessor(fabric.NewBlockParser(logger, namespaces), handlers),
 		logger,
 	)
 }

@@ -41,6 +41,13 @@ func (f *fixedParser) ParseTx(_ *common.Envelope) (*blocks.Transaction, error) {
 	}, nil
 }
 
+// nilParser yields no transaction, like a parser does for a config transaction.
+type nilParser struct{}
+
+func (nilParser) ParseTx(_ *common.Envelope) (*blocks.Transaction, error) {
+	return nil, nil
+}
+
 // --- test helpers ---
 
 func newTestDB(t *testing.T) *state.VersionedDB {
@@ -82,6 +89,21 @@ func TestLocalSubmitter_Submit_BlindWrite(t *testing.T) {
 	}
 	if got == nil || string(got.Value) != "v" {
 		t.Errorf("unexpected record: %+v", got)
+	}
+}
+
+func TestLocalSubmitter_Submit_NoTransaction(t *testing.T) {
+	db := newTestDB(t)
+	s := NewLocalSubmitter(db, db.CurrentRecordGetter(), "chan1", "ns",
+		&fixedPackager{env: &common.Envelope{}}, nilParser{}, false)
+
+	if err := s.Submit(context.Background(), sdk.Endorsement{}); err == nil {
+		t.Fatal("expected an error when the envelope holds no transaction")
+	}
+	// nothing was committed
+	n, _ := db.BlockNumber(context.Background())
+	if n != 0 {
+		t.Errorf("expected no block, got block %d", n)
 	}
 }
 

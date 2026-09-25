@@ -73,10 +73,10 @@ func Start(ctx context.Context, namespace, networkType string, cfg Config, db1 b
 
 	switch networkType {
 	case "fabric":
-		parser = fabric.NewBlockParser(logger)
+		parser = fabric.NewBlockParser(logger, nil)
 		validator = fabric.NewMVCCValidator(rg, logger)
 	case "fabric-x":
-		parser = fabricx.NewBlockParser(logger)
+		parser = fabricx.NewBlockParser(logger, nil)
 		validator = fabricx.NewMVCCValidator(rg, logger)
 	default:
 		return nil, errors.New("networkType must be fabric or fabric-x")

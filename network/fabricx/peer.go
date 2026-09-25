@@ -264,9 +264,16 @@ func convertNotificationResponse(res *committerpb.NotificationResponse) []notifi
 // sidecar and maintains a local world state. It supports catch-up from any block
 // height, automatic reconnection, and liveness/readiness probes.
 //
+// If namespaces is non-empty, handlers only see transactions that touch at least one of
+// them, and only the read/write sets of those namespaces. This is the same result as
+// notification.AllTxStreamer with StreamAllRequest.FilterNamespaces, so both feeds can
+// be combined in one handler chain. Blocks are always delivered, possibly without
+// transactions, so handlers can keep track of the block height. A nil or empty
+// namespaces passes every transaction on the channel.
+//
 // For a real-time feed of committed transactions without world-state maintenance,
 // use notification.AllTxStreamer with the same Peer instead.
-func NewSynchronizer(db network.BlockHeightReader, channel string, conf network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
+func NewSynchronizer(db network.BlockHeightReader, channel string, namespaces []string, conf network.PeerConf, signer sdk.Signer, logger sdk.Logger, handlers ...blocks.BlockHandler) (*network.Synchronizer, error) {
 	peer, err := NewPeer(conf, channel, signer)
 	if err != nil {
 		return nil, err
@@ -275,7 +282,7 @@ func NewSynchronizer(db network.BlockHeightReader, channel string, conf network.
 	return network.NewSynchronizer(
 		db,
 		peer,
-		blocks.NewProcessor(fabricx.NewBlockParser(logger), handlers),
+		blocks.NewProcessor(fabricx.NewBlockParser(logger, namespaces), handlers),
 		logger,
 	)
 }

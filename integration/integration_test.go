@@ -316,7 +316,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 	case "fabric":
 		builder = efab.NewEndorsementBuilder(signer)
 		invocations = efab.NewInvocationBuilder(signer)
-		sync, err = nfab.NewSynchronizer(localDB, cfg.Channel, cfg.Peer, signer, log, localDB, capture)
+		sync, err = nfab.NewSynchronizer(localDB, cfg.Channel, nil, cfg.Peer, signer, log, localDB, capture)
 		if err != nil {
 			t.Fatalf("NewSynchronizaer: %v", err)
 		}
@@ -331,7 +331,7 @@ func newSetup(t *testing.T, networkType string, cfg config) *testSetup {
 		sync, err = network.NewSynchronizer(
 			localDB,
 			fxPeer,
-			blocks.NewProcessor(bfabx.NewBlockParser(log), []blocks.BlockHandler{localDB, capture}),
+			blocks.NewProcessor(bfabx.NewBlockParser(log, nil), []blocks.BlockHandler{localDB, capture}),
 			log,
 		)
 		if err != nil {

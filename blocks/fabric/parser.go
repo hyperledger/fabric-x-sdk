@@ -8,6 +8,7 @@ package fabric
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -21,13 +22,18 @@ import (
 )
 
 // NewBlockParser returns a BlockParser that decodes classic Hyperledger Fabric blocks.
-func NewBlockParser(log sdk.Logger) BlockParser {
-	return BlockParser{log: log}
+//
+// If namespaces is non-empty, Parse only keeps transactions that have a read/write set
+// in at least one of them, and strips the read/write sets of all other namespaces from
+// those. A nil or empty namespaces disables filtering.
+func NewBlockParser(log sdk.Logger, namespaces []string) BlockParser {
+	return BlockParser{log: log, namespaces: slices.Clone(namespaces)}
 }
 
 // BlockParser decodes raw Fabric block envelopes into the SDK's Block representation.
 type BlockParser struct {
-	log sdk.Logger
+	log        sdk.Logger
+	namespaces []string
 }
 
 func (p BlockParser) Parse(b *common.Block) (blocks.Block, error) {
@@ -76,7 +82,11 @@ func statusForTx(txFilter []byte, txNum int) (blocks.Status, int32, string) {
 	return StatusFromValidationCode(peer.TxValidationCode(txFilter[txNum]))
 }
 
-func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
+// ParseTx decodes a single envelope, applying the namespaces the parser was created with:
+// only those namespaces are decoded, so that the ones that are filtered out (and
+// transactions that touch none of them) are not decoded in full. A transaction that touches
+// none of them yields a nil transaction, like a config transaction does.
+func (p BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 	pl := &common.Payload{}
 	if err := proto.Unmarshal(env.Payload, pl); err != nil {
 		return nil, fmt.Errorf("payload: %w", err)
@@ -113,20 +123,8 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 		NsRWS: []blocks.NsReadWriteSet{},
 	}
 
-	// input args
-	cpp := &peer.ChaincodeProposalPayload{}
-	if err := proto.Unmarshal(cap.ChaincodeProposalPayload, cpp); err != nil {
-		return nil, fmt.Errorf("chaincode proposal payload: %w", err)
-	}
-	cis := &peer.ChaincodeInvocationSpec{}
-	if err := proto.Unmarshal(cpp.Input, cis); err != nil {
-		return nil, fmt.Errorf("chaincode invocation spec: %w", err)
-	}
-	if cis.ChaincodeSpec != nil && cis.ChaincodeSpec.Input != nil {
-		tx.InputArgs = cis.ChaincodeSpec.Input.Args
-	}
-
-	// events
+	// read/write set. Only the listed namespaces are decoded, and before the input
+	// and events, so a tx that touches none of them is skipped without decoding those.
 	prp := &peer.ProposalResponsePayload{}
 	if err := proto.Unmarshal(cap.Action.ProposalResponsePayload, prp); err != nil {
 		return nil, fmt.Errorf("proposal response payload: %w", err)
@@ -135,9 +133,6 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 	if err := proto.Unmarshal(prp.Extension, ccAct); err != nil {
 		return nil, fmt.Errorf("chaincode action: %w", err)
 	}
-	tx.Events = ccAct.Events
-
-	// read/write set
 	txRWSet := &rwset.TxReadWriteSet{}
 	if err := proto.Unmarshal(ccAct.Results, txRWSet); err != nil {
 		return nil, fmt.Errorf("rwset: %w", err)
@@ -145,6 +140,9 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 
 	for _, ns := range txRWSet.NsRwset {
 		if ns == nil || len(ns.Namespace) == 0 {
+			continue
+		}
+		if len(p.namespaces) > 0 && !slices.Contains(p.namespaces, ns.Namespace) {
 			continue
 		}
 
@@ -180,6 +178,27 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 
 		tx.NsRWS = append(tx.NsRWS, nsrws)
 	}
+
+	// drop txs that touch no listed namespace
+	if len(p.namespaces) > 0 && len(tx.NsRWS) == 0 {
+		return nil, nil
+	}
+
+	// input args
+	cpp := &peer.ChaincodeProposalPayload{}
+	if err := proto.Unmarshal(cap.ChaincodeProposalPayload, cpp); err != nil {
+		return nil, fmt.Errorf("chaincode proposal payload: %w", err)
+	}
+	cis := &peer.ChaincodeInvocationSpec{}
+	if err := proto.Unmarshal(cpp.Input, cis); err != nil {
+		return nil, fmt.Errorf("chaincode invocation spec: %w", err)
+	}
+	if cis.ChaincodeSpec != nil && cis.ChaincodeSpec.Input != nil {
+		tx.InputArgs = cis.ChaincodeSpec.Input.Args
+	}
+
+	// events
+	tx.Events = ccAct.Events
 
 	return tx, nil
 }

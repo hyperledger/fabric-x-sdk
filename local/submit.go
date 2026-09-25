@@ -12,6 +12,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -44,7 +45,9 @@ type TxPackager interface {
 	PackageTx(sdk.Endorsement) (*common.Envelope, error)
 }
 
-// TxParser extracts read-write sets from transaction envelopes.
+// TxParser extracts read-write sets from transaction envelopes. It returns a nil
+// transaction for an envelope that holds none. A parser from blocks/fabric or
+// blocks/fabricx should be created without namespaces, to get all of them.
 type TxParser interface {
 	ParseTx(env *common.Envelope) (*blocks.Transaction, error)
 }
@@ -81,6 +84,10 @@ func (s LocalSubmitter) Submit(ctx context.Context, end sdk.Endorsement) error {
 	tx, err := s.parser.ParseTx(env)
 	if err != nil {
 		return fmt.Errorf("unpackage proposal: %w", err)
+	}
+	if tx == nil {
+		// a config transaction, or one that the parser's namespaces filter out
+		return errors.New("unpackage proposal: envelope holds no transaction for the parser")
 	}
 	tx.SetStatus(blocks.StatusCommitted, 0, "")
 

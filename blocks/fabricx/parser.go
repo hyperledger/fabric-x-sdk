@@ -8,6 +8,7 @@ package fabricx
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -19,17 +20,20 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// eventKey and inputKey mirror the constants in endorsement/fabricx.
-// Both sides of the wire format independently own these definitions.
-
 // NewBlockParser returns a BlockParser that decodes Fabric-X blocks.
-func NewBlockParser(log sdk.Logger) BlockParser {
-	return BlockParser{log: log}
+//
+// If namespaces is non-empty, Parse only keeps transactions that have a read/write set
+// in at least one of them, and strips the read/write sets of all other namespaces from
+// those. A nil or empty namespaces disables filtering. This is the same result as the
+// committer's StreamAllTransactions with FilterNamespaces.
+func NewBlockParser(log sdk.Logger, namespaces []string) BlockParser {
+	return BlockParser{log: log, namespaces: slices.Clone(namespaces)}
 }
 
 // BlockParser decodes raw Fabric-X block envelopes into the SDK's Block representation.
 type BlockParser struct {
-	log sdk.Logger
+	log        sdk.Logger
+	namespaces []string
 }
 
 func (p BlockParser) Parse(b *common.Block) (blocks.Block, error) {
@@ -78,7 +82,11 @@ func statusForTx(txFilter []byte, txNum int) (blocks.Status, int32, string) {
 	return StatusFromCommitterStatus(committerpb.Status(txFilter[txNum]))
 }
 
-func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
+// ParseTx decodes a single envelope, applying the namespaces the parser was created with:
+// only those namespaces are decoded, so that the ones that are filtered out (and
+// transactions that touch none of them) are not decoded any further. A transaction that
+// touches none of them yields a nil transaction, like a config transaction does.
+func (p BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 	pl := &common.Payload{}
 	if err := proto.Unmarshal(env.Payload, pl); err != nil {
 		return nil, fmt.Errorf("payload: %w", err)
@@ -101,12 +109,29 @@ func (BlockParser) ParseTx(env *common.Envelope) (*blocks.Transaction, error) {
 		return nil, fmt.Errorf("transaction: %w", err)
 	}
 
+	// Filter the protos, so that the namespaces that are dropped never get decoded. This
+	// mirrors the committer's filterNamespaces, and TestNamespaceFilterMatchesBlockParser
+	// in fabrictest keeps the two in line.
+	txNamespaces := ptx.Namespaces
+	if len(p.namespaces) > 0 {
+		var kept []*applicationpb.TxNamespace
+		for _, ns := range txNamespaces {
+			if slices.Contains(p.namespaces, ns.NsId) {
+				kept = append(kept, ns)
+			}
+		}
+		if len(kept) == 0 {
+			return nil, nil
+		}
+		txNamespaces = kept
+	}
+
 	inputArgs, events := DecodeMetadata(ptx.Metadata)
 	tx := &blocks.Transaction{
 		ID:        chdr.TxId,
 		InputArgs: inputArgs,
 		Events:    events,
-		NsRWS:     DecodeNamespaces(ptx.Namespaces),
+		NsRWS:     DecodeNamespaces(txNamespaces),
 	}
 
 	return tx, nil
