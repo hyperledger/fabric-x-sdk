@@ -73,7 +73,9 @@ func TestFabricXCommitter(t *testing.T) {
 		t.Skip("skipping fabric-x committer tests in short mode")
 	}
 
-	runAll(t, newTestCommitterSetup(t))
+	s := newTestCommitterSetup(t)
+	runAll(t, s)
+	t.Run("QueryServiceStore", func(t *testing.T) { testQueryServiceStore(t, s) })
 }
 
 // TestFabricTestTwoTransactions verifies that two transactions land in the same block
@@ -131,8 +133,9 @@ type testSetup struct {
 	builders              []endorsement.Builder
 	submitter             *network.Submitter
 	capture               *captureHandler
-	peer                  *nfabx.Peer // non-nil only for fabric-x
-	supportsNotifications bool        // true only for the real Fabric-X committer
+	peer                  *nfabx.Peer      // non-nil only for fabric-x
+	supportsNotifications bool             // true only for the real Fabric-X committer
+	queryService          network.PeerConf // set only for the real Fabric-X committer
 }
 
 type config struct {
@@ -280,6 +283,8 @@ func newTestCommitterSetup(t *testing.T) *testSetup {
 
 	s := newSetup(t, "fabric-x", cfg)
 	s.supportsNotifications = true
+	s.queryService = cfg.Peer
+	s.queryService.Address = "localhost:7001"
 	return s
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
 	"github.com/hyperledger/fabric-x-sdk/notification"
+	"github.com/hyperledger/fabric-x-sdk/state/queryservice"
 )
 
 // testCase is a backend-agnostic test function. The testSetup is shared across
@@ -638,4 +639,61 @@ func testTwoTransactions(t *testing.T, s *testSetup) {
 	}
 	s.waitForKeyValue(t, key, "hello")
 	s.waitForKeyValue(t, key1, "hello1")
+}
+
+// testQueryServiceStore reads committed state back through the committer's
+// query service, and checks that a snapshot does not see later commits.
+func testQueryServiceStore(t *testing.T, s *testSetup) {
+	client, err := queryservice.NewGRPCClient(s.queryService, 1)
+	if err != nil {
+		t.Fatalf("query service client: %v", err)
+	}
+	store := queryservice.NewStore(client)
+	t.Cleanup(func() { store.Close() }) //nolint:errcheck,gosec // Best-effort test cleanup.
+
+	keyA := t.Name() + "/a/" + rand.Text()
+	keyB := t.Name() + "/b/" + rand.Text()
+	write := func(key, value string) {
+		t.Helper()
+		if err := s.endorseAndSubmit(t.Context(), blocks.ReadWriteSet{
+			Writes: []blocks.KVWrite{{Key: key, Value: []byte(value)}},
+		}); err != nil {
+			t.Fatalf("submit: %v", err)
+		}
+		s.waitForKeyValue(t, key, value)
+	}
+	get := func(r interface {
+		Get(string, string) (*blocks.WriteRecord, error)
+	}, key string) string {
+		t.Helper()
+		rec, err := r.Get(s.namespace, key)
+		if err != nil {
+			t.Fatalf("get %s: %v", key, err)
+		}
+		if rec == nil {
+			return ""
+		}
+		return string(rec.Value)
+	}
+
+	write(keyA, "a")
+	snap, err := store.NewSnapshot()
+	if err != nil {
+		t.Fatalf("new snapshot: %v", err)
+	}
+	if got := get(snap, keyA); got != "a" { // the first read fixes the snapshot
+		t.Fatalf("snapshot read %q, want a", got)
+	}
+
+	write(keyB, "b")
+	if got := get(snap, keyB); got != "" {
+		t.Errorf("snapshot sees a later commit: read %q", got)
+	}
+	if err := snap.Close(); err != nil {
+		t.Fatalf("close snapshot: %v", err)
+	}
+
+	if got := get(store, keyB); got != "b" {
+		t.Errorf("latest read %q, want b", got)
+	}
 }
