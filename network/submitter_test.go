@@ -23,9 +23,12 @@ import (
 // --- fake orderer gRPC server ---
 
 // fakeBroadcastServer is a minimal orderer.AtomicBroadcastServer that
-// acknowledges every envelope it receives.
+// acknowledges every envelope it receives, unless it is given a reply to send instead.
 type fakeBroadcastServer struct {
 	ordererpb.UnimplementedAtomicBroadcastServer
+
+	// reply is sent for every envelope. Set before the server starts; nil means SUCCESS.
+	reply *ordererpb.BroadcastResponse
 
 	mu       sync.Mutex
 	received int
@@ -41,7 +44,11 @@ func (s *fakeBroadcastServer) Broadcast(stream ordererpb.AtomicBroadcast_Broadca
 		s.mu.Lock()
 		s.received++
 		s.mu.Unlock()
-		if err := stream.Send(&ordererpb.BroadcastResponse{Status: common.Status_SUCCESS}); err != nil {
+		reply := s.reply
+		if reply == nil {
+			reply = &ordererpb.BroadcastResponse{Status: common.Status_SUCCESS}
+		}
+		if err := stream.Send(reply); err != nil {
 			return err
 		}
 	}
@@ -58,6 +65,12 @@ func (s *fakeBroadcastServer) receivedCount() int {
 // t.Cleanup.
 func startFakeOrderer(t *testing.T) (string, *fakeBroadcastServer) {
 	t.Helper()
+	return startFakeOrdererReplying(t, nil)
+}
+
+// startFakeOrdererReplying is like startFakeOrderer, but answers every envelope with reply.
+func startFakeOrdererReplying(t *testing.T, reply *ordererpb.BroadcastResponse) (string, *fakeBroadcastServer) {
+	t.Helper()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -65,7 +78,7 @@ func startFakeOrderer(t *testing.T) (string, *fakeBroadcastServer) {
 	}
 
 	srv := grpc.NewServer()
-	fake := &fakeBroadcastServer{}
+	fake := &fakeBroadcastServer{reply: reply}
 	ordererpb.RegisterAtomicBroadcastServer(srv, fake)
 
 	go srv.Serve(lis) //nolint:errcheck
@@ -272,7 +285,7 @@ func TestSubmitter_Submit(t *testing.T) {
 func TestSubmitter_QuorumBroadcast(t *testing.T) {
 	newOrderer := func(t *testing.T, addr string) *Orderer {
 		t.Helper()
-		o, err := NewOrderer(t.Context(), testOrdererConf(addr))
+		o, err := NewOrderer(t.Context(), testOrdererConf(addr), sdk.NoOpLogger{})
 		if err != nil {
 			t.Fatalf("NewOrderer: %v", err)
 		}
