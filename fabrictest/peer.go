@@ -35,8 +35,7 @@ func newTestPeer(ledger *ledger) *testPeer {
 type testPeer struct {
 	ledger  *ledger
 	builder endorsement.Builder
-	committerpb.UnimplementedBlockQueryServiceServer
-	committerpb.UnimplementedNotifierServer
+	committerpb.UnimplementedSidecarServiceServer
 }
 
 // parseStartBlock extracts the requested start block number from the seek envelope.
@@ -144,56 +143,61 @@ func (p *testPeer) ProcessProposal(ctx context.Context, prop *peer.SignedProposa
 		return nil, errors.New("only qscc GetChainInfo is supported in fabrictest")
 	}
 
-	// Return ProposalResponse with the ledger height and mocked hashes as payload, just as a Fabric peer would respond.
+	// Return ProposalResponse with the ledger height and the real chain-tip hashes as
+	// payload, just as a Fabric peer would respond. The hashes are the ones in the
+	// delivered blocks' headers, so a client can match this reply against them.
+	height, currentHash, previousHash := p.ledger.chainInfo()
 	return p.builder.Endorse(inv, endorsement.ExecutionResult{
 		Status: 200,
 		Payload: protoutil.MarshalOrPanic(&common.BlockchainInfo{
-			Height:            p.ledger.height(),
-			CurrentBlockHash:  []byte("current-block-hash"),
-			PreviousBlockHash: []byte("previous-block-hash"),
+			Height:            height,
+			CurrentBlockHash:  currentHash,
+			PreviousBlockHash: previousHash,
 		}),
 	})
 }
 
 // Fabric-X
 
-// GetBlockchainInfo implements the Fabric-X BlockQueryService for getting blockchain height
+// GetBlockchainInfo implements the Fabric-X SidecarService for getting blockchain height
 func (p *testPeer) GetBlockchainInfo(ctx context.Context, _ *emptypb.Empty) (*common.BlockchainInfo, error) {
-	height := p.ledger.height()
+	height, currentHash, previousHash := p.ledger.chainInfo()
 	return &common.BlockchainInfo{
-		Height: height,
+		Height:            height,
+		CurrentBlockHash:  currentHash,
+		PreviousBlockHash: previousHash,
 	}, nil
 }
 
-// GetBlockByNumber implements the Fabric-X BlockQueryService for getting a specific block
+// GetBlockByNumber implements the Fabric-X SidecarService for getting a specific block
 func (p *testPeer) GetBlockByNumber(ctx context.Context, req *committerpb.BlockNumber) (*common.Block, error) {
 	return nil, errors.New("GetBlockByNumber not implemented in fabrictest")
 }
 
-// GetBlockByTxID implements the Vabric-X BlockQueryService for getting a block by transaction ID
+// GetBlockByTxID implements the Fabric-X SidecarService for getting a block by transaction ID
 func (p *testPeer) GetBlockByTxID(ctx context.Context, req *committerpb.TxID) (*common.Block, error) {
 	return nil, errors.New("GetBlockByTxID not implemented in fabrictest")
 }
 
-// GetTxByID implements the Dabric-X BlockQueryService for getting a transaction by ID
+// GetTxByID implements the Fabric-X SidecarService for getting a transaction by ID
 func (p *testPeer) GetTxByID(ctx context.Context, req *committerpb.TxID) (*common.Envelope, error) {
 	return nil, errors.New("GetTxByID not implemented in fabrictest")
 }
 
-// StreamAllTransactions implements the Fabric-X Notifier service: it streams a
-// TxEventBatch for every block committed after subscription, honoring
-// StreamAllRequest's namespace (OR match) and status filters as well as the
-// include_* flags. Like the real committer's Notifier, this is a real-time feed
+// StreamBlocks implements the Fabric-X SidecarService's block feed: it streams a
+// BlockEvent for every block committed after subscription, honoring
+// StreamBlocksRequest's namespace (OR match) and status filters as well as the
+// include_* flags. Like the real committer's sidecar, this is a real-time feed
 // with no historical replay.
 //
 // Transactions are decoded as Fabric-X applicationpb.Tx; blocks from a "fabric"
 // (classic) fabrictest network use a different channel header type and are
 // naturally skipped rather than misinterpreted.
-func (p *testPeer) StreamAllTransactions(req *committerpb.StreamAllRequest, stream committerpb.Notifier_StreamAllTransactionsServer) error {
+func (p *testPeer) StreamBlocks(req *committerpb.StreamBlocksRequest, stream committerpb.SidecarService_StreamBlocksServer) error {
 	_, sub := p.ledger.subscribe()
 
 	for block := range sub {
-		batch := buildTxEventBatch(block, req)
+		batch := buildBlockEvent(block, req)
 		if batch == nil {
 			continue
 		}
@@ -205,9 +209,9 @@ func (p *testPeer) StreamAllTransactions(req *committerpb.StreamAllRequest, stre
 	return nil
 }
 
-// buildTxEventBatch decodes block into a TxEventBatch filtered per req.
+// buildBlockEvent decodes block into a BlockEvent filtered per req.
 // It returns nil if the block has no events matching the filters.
-func buildTxEventBatch(block *common.Block, req *committerpb.StreamAllRequest) *committerpb.TxEventBatch {
+func buildBlockEvent(block *common.Block, req *committerpb.StreamBlocksRequest) *committerpb.BlockEvent {
 	txFilter := block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER]
 
 	var events []*committerpb.TxEvent
@@ -269,7 +273,7 @@ func buildTxEventBatch(block *common.Block, req *committerpb.StreamAllRequest) *
 	if len(events) == 0 {
 		return nil
 	}
-	return &committerpb.TxEventBatch{BlockNumber: block.Header.Number, Events: events}
+	return &committerpb.BlockEvent{Header: block.Header, Events: events}
 }
 
 // statusMatches reports whether status passes filter (OR match). An empty filter matches everything.

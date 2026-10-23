@@ -33,7 +33,14 @@ type CommittedTxEvent struct {
 // Preserving block boundaries allows handlers to process a whole block atomically.
 type AllTxBatch struct {
 	BlockNumber uint64
-	Events      []CommittedTxEvent
+	// Hash is the block's hash, derived from the block header the service reports
+	// for this block. It is computed the same way as on the delivery path, so a
+	// block carries the same hash whichever path delivered it.
+	Hash []byte
+	// ParentHash is the previous block's hash, taken from the same header.
+	// It is empty for the genesis block.
+	ParentHash []byte
+	Events     []CommittedTxEvent
 }
 
 // AllTxHandler processes batches of committed transaction events.

@@ -521,7 +521,7 @@ func (c *txStatusCapture) Handle(_ context.Context, events []notification.TxStat
 	return nil
 }
 
-// testStreamAllTransactions exercises the Fabric-X Notifier's StreamAllTransactions
+// testStreamAllTransactions exercises the Fabric-X sidecar's StreamBlocks
 // RPC (as opposed to testNotifications, which exercises OpenNotificationStream).
 // Unlike OpenNotificationStream, fabrictest implements this RPC, so it runs against
 // every fabric-x backend rather than being gated on s.supportsNotifications.

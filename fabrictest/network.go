@@ -107,8 +107,7 @@ func Start(ctx context.Context, namespace, networkType string, cfg Config, db1 b
 	orderer.RegisterAtomicBroadcastServer(n.oSrv, n.orderer)
 	peer.RegisterDeliverServer(n.pSrv, testPeer)
 	peer.RegisterEndorserServer(n.pSrv, testPeer)
-	committerpb.RegisterBlockQueryServiceServer(n.pSrv, testPeer)
-	committerpb.RegisterNotifierServer(n.pSrv, testPeer)
+	committerpb.RegisterSidecarServiceServer(n.pSrv, testPeer)
 
 	go func() {
 		if err := n.oSrv.Serve(ordererLis); err != nil {

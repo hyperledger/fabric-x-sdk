@@ -67,9 +67,9 @@ func TestProcess_TxFilterAlignsWithBlockPositions(t *testing.T) {
 	}
 
 	// The event stream reads statuses by block position, so it must agree.
-	batch := buildTxEventBatch(blk, &committerpb.StreamAllRequest{})
+	batch := buildBlockEvent(blk, &committerpb.StreamBlocksRequest{})
 	if batch == nil {
-		t.Fatal("buildTxEventBatch returned nil, want a batch")
+		t.Fatal("buildBlockEvent returned nil, want a batch")
 	}
 	want := map[uint32]string{0: "tx0", 2: "tx2"}
 	if len(batch.Events) != len(want) {

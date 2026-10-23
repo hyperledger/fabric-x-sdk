@@ -7,15 +7,18 @@ SPDX-License-Identifier: Apache-2.0
 package fabricx
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-common/protoutil"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-func TestConvertTxEventBatch_FieldMapping(t *testing.T) {
-	protoBatch := &committerpb.TxEventBatch{
-		BlockNumber: 42,
+func TestConvertBlockEvent_FieldMapping(t *testing.T) {
+	protoBatch := &committerpb.BlockEvent{
+		Header: &common.BlockHeader{Number: 42, PreviousHash: []byte("parent-41")},
 		Events: []*committerpb.TxEvent{
 			{
 				Ref:    &committerpb.TxRef{TxId: "txABC", BlockNum: 42, TxNum: 3},
@@ -28,10 +31,17 @@ func TestConvertTxEventBatch_FieldMapping(t *testing.T) {
 		},
 	}
 
-	got := convertTxEventBatch(protoBatch)
+	got := convertBlockEvent(protoBatch)
 
 	if got.BlockNumber != 42 {
 		t.Errorf("BlockNumber: want 42, got %d", got.BlockNumber)
+	}
+	// The hash must be the header hash, the same value the delivery path derives.
+	if want := protoutil.BlockHeaderHash(protoBatch.Header); !bytes.Equal(got.Hash, want) {
+		t.Errorf("Hash: want %x, got %x", want, got.Hash)
+	}
+	if !bytes.Equal(got.ParentHash, []byte("parent-41")) {
+		t.Errorf("ParentHash: want %q, got %q", "parent-41", got.ParentHash)
 	}
 	if len(got.Events) != 2 {
 		t.Fatalf("want 2 events, got %d", len(got.Events))
@@ -53,13 +63,36 @@ func TestConvertTxEventBatch_FieldMapping(t *testing.T) {
 	}
 }
 
-func TestConvertTxEventBatch_EmptyEvents(t *testing.T) {
-	got := convertTxEventBatch(&committerpb.TxEventBatch{BlockNumber: 7})
+func TestConvertBlockEvent_EmptyEvents(t *testing.T) {
+	got := convertBlockEvent(&committerpb.BlockEvent{Header: &common.BlockHeader{Number: 7}})
 	if got.BlockNumber != 7 {
 		t.Errorf("BlockNumber: want 7, got %d", got.BlockNumber)
 	}
 	if len(got.Events) != 0 {
 		t.Errorf("expected empty events slice, got %d", len(got.Events))
+	}
+}
+
+// A header is always sent by the committer, but a missing one must leave the hashes
+// empty rather than hash a nil header into a plausible-looking value.
+func TestConvertBlockEvent_NoHeaderLeavesHashesEmpty(t *testing.T) {
+	got := convertBlockEvent(&committerpb.BlockEvent{})
+	if got.BlockNumber != 0 {
+		t.Errorf("BlockNumber: want 0, got %d", got.BlockNumber)
+	}
+	if got.Hash != nil || got.ParentHash != nil {
+		t.Errorf("want nil hashes, got Hash=%x ParentHash=%x", got.Hash, got.ParentHash)
+	}
+}
+
+// The genesis block has no previous hash; ParentHash must be empty, not a hash of nothing.
+func TestConvertBlockEvent_GenesisHasEmptyParentHash(t *testing.T) {
+	got := convertBlockEvent(&committerpb.BlockEvent{Header: &common.BlockHeader{Number: 0}})
+	if len(got.ParentHash) != 0 {
+		t.Errorf("ParentHash: want empty for genesis, got %x", got.ParentHash)
+	}
+	if len(got.Hash) == 0 {
+		t.Error("Hash: want the genesis header hash, got empty")
 	}
 }
 

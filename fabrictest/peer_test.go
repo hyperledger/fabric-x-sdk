@@ -66,21 +66,21 @@ func simpleTx(nsID string) *applicationpb.Tx {
 	}
 }
 
-func TestBuildTxEventBatch_NamespaceFilterExcludesNonMatching(t *testing.T) {
+func TestBuildBlockEvent_NamespaceFilterExcludesNonMatching(t *testing.T) {
 	env := buildEnvelope(t, "tx0", common.HeaderType_MESSAGE, simpleTx("other"))
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{FilterNamespaces: []string{"basic"}})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{FilterNamespaces: []string{"basic"}})
 	if batch != nil {
 		t.Fatalf("expected nil batch (no matching namespace), got %+v", batch)
 	}
 }
 
-func TestBuildTxEventBatch_NamespaceFilterIncludesMatching(t *testing.T) {
+func TestBuildBlockEvent_NamespaceFilterIncludesMatching(t *testing.T) {
 	env := buildEnvelope(t, "tx0", common.HeaderType_MESSAGE, simpleTx("basic"))
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{FilterNamespaces: []string{"basic"}})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{FilterNamespaces: []string{"basic"}})
 	if batch == nil || len(batch.Events) != 1 {
 		t.Fatalf("expected 1 event, got %+v", batch)
 	}
@@ -89,17 +89,17 @@ func TestBuildTxEventBatch_NamespaceFilterIncludesMatching(t *testing.T) {
 	}
 }
 
-func TestBuildTxEventBatch_NoFilterIncludesAll(t *testing.T) {
+func TestBuildBlockEvent_NoFilterIncludesAll(t *testing.T) {
 	env := buildEnvelope(t, "tx0", common.HeaderType_MESSAGE, simpleTx("anything"))
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
 	if batch == nil || len(batch.Events) != 1 {
 		t.Fatalf("expected 1 event with an empty filter, got %+v", batch)
 	}
 }
 
-func TestBuildTxEventBatch_PartialNamespaceMatchOnlyIncludesMatchingNamespaces(t *testing.T) {
+func TestBuildBlockEvent_PartialNamespaceMatchOnlyIncludesMatchingNamespaces(t *testing.T) {
 	tx := &applicationpb.Tx{
 		Namespaces: []*applicationpb.TxNamespace{
 			{NsId: "ns1", BlindWrites: []*applicationpb.Write{{Key: []byte("k1"), Value: []byte("v1")}}},
@@ -109,7 +109,7 @@ func TestBuildTxEventBatch_PartialNamespaceMatchOnlyIncludesMatchingNamespaces(t
 	env := buildEnvelope(t, "tx0", common.HeaderType_MESSAGE, tx)
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{
 		FilterNamespaces:     []string{"ns2"},
 		IncludeReadWriteSets: true,
 	})
@@ -122,7 +122,7 @@ func TestBuildTxEventBatch_PartialNamespaceMatchOnlyIncludesMatchingNamespaces(t
 	}
 }
 
-func TestBuildTxEventBatch_StatusFilter(t *testing.T) {
+func TestBuildBlockEvent_StatusFilter(t *testing.T) {
 	committed := buildEnvelope(t, "tx-committed", common.HeaderType_MESSAGE, simpleTx("basic"))
 	aborted := buildEnvelope(t, "tx-aborted", common.HeaderType_MESSAGE, simpleTx("basic"))
 	block := buildTestBlock(t, 1, []*common.Envelope{committed, aborted}, []byte{
@@ -131,7 +131,7 @@ func TestBuildTxEventBatch_StatusFilter(t *testing.T) {
 	})
 
 	// No filter: both included, each with its own status.
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
 	if batch == nil || len(batch.Events) != 2 {
 		t.Fatalf("expected 2 events, got %+v", batch)
 	}
@@ -143,25 +143,25 @@ func TestBuildTxEventBatch_StatusFilter(t *testing.T) {
 	}
 
 	// Filtered to COMMITTED only.
-	batch = buildTxEventBatch(block, &committerpb.StreamAllRequest{FilterStatus: []committerpb.Status{committerpb.Status_COMMITTED}})
+	batch = buildBlockEvent(block, &committerpb.StreamBlocksRequest{FilterStatus: []committerpb.Status{committerpb.Status_COMMITTED}})
 	if batch == nil || len(batch.Events) != 1 || batch.Events[0].Ref.TxId != "tx-committed" {
 		t.Fatalf("expected only the committed tx, got %+v", batch)
 	}
 
 	// Filtered to ABORTED_MVCC_CONFLICT only.
-	batch = buildTxEventBatch(block, &committerpb.StreamAllRequest{FilterStatus: []committerpb.Status{committerpb.Status_ABORTED_MVCC_CONFLICT}})
+	batch = buildBlockEvent(block, &committerpb.StreamBlocksRequest{FilterStatus: []committerpb.Status{committerpb.Status_ABORTED_MVCC_CONFLICT}})
 	if batch == nil || len(batch.Events) != 1 || batch.Events[0].Ref.TxId != "tx-aborted" {
 		t.Fatalf("expected only the aborted tx, got %+v", batch)
 	}
 
 	// Filtered to a status neither tx has: no events at all.
-	batch = buildTxEventBatch(block, &committerpb.StreamAllRequest{FilterStatus: []committerpb.Status{committerpb.Status_MALFORMED_BAD_ENVELOPE}})
+	batch = buildBlockEvent(block, &committerpb.StreamBlocksRequest{FilterStatus: []committerpb.Status{committerpb.Status_MALFORMED_BAD_ENVELOPE}})
 	if batch != nil {
 		t.Fatalf("expected nil batch, got %+v", batch)
 	}
 }
 
-func TestBuildTxEventBatch_IncludeFlagsDefaultToEmpty(t *testing.T) {
+func TestBuildBlockEvent_IncludeFlagsDefaultToEmpty(t *testing.T) {
 	tx := &applicationpb.Tx{
 		Namespaces: []*applicationpb.TxNamespace{
 			{NsId: "basic", BlindWrites: []*applicationpb.Write{{Key: []byte("k"), Value: []byte("v")}}},
@@ -175,7 +175,7 @@ func TestBuildTxEventBatch_IncludeFlagsDefaultToEmpty(t *testing.T) {
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
 	// All include_* flags left at their zero value (false).
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
 	if batch == nil || len(batch.Events) != 1 {
 		t.Fatalf("expected 1 event, got %+v", batch)
 	}
@@ -191,7 +191,7 @@ func TestBuildTxEventBatch_IncludeFlagsDefaultToEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildTxEventBatch_IncludeEndorsementsAndMetadata(t *testing.T) {
+func TestBuildBlockEvent_IncludeEndorsementsAndMetadata(t *testing.T) {
 	tx := &applicationpb.Tx{
 		Namespaces: []*applicationpb.TxNamespace{
 			{NsId: "basic", BlindWrites: []*applicationpb.Write{{Key: []byte("k"), Value: []byte("v")}}},
@@ -204,7 +204,7 @@ func TestBuildTxEventBatch_IncludeEndorsementsAndMetadata(t *testing.T) {
 	env := buildEnvelope(t, "tx0", common.HeaderType_MESSAGE, tx)
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{
 		IncludeEndorsements: true,
 		IncludeMetadata:     true,
 	})
@@ -221,30 +221,30 @@ func TestBuildTxEventBatch_IncludeEndorsementsAndMetadata(t *testing.T) {
 	}
 }
 
-func TestBuildTxEventBatch_ConfigTxSkipped(t *testing.T) {
+func TestBuildBlockEvent_ConfigTxSkipped(t *testing.T) {
 	env := buildEnvelope(t, "tx0", common.HeaderType_CONFIG, simpleTx("basic"))
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
 	if batch != nil {
 		t.Fatalf("expected nil batch (config tx must be skipped), got %+v", batch)
 	}
 }
 
-func TestBuildTxEventBatch_ClassicFabricTxSkipped(t *testing.T) {
+func TestBuildBlockEvent_ClassicFabricTxSkipped(t *testing.T) {
 	// A "fabric" (classic) network's transactions use HeaderType_ENDORSER_TRANSACTION
 	// and a wire format that isn't applicationpb.Tx; the notifier must not misinterpret
 	// them, and simply skips them rather than emitting garbage.
 	env := buildEnvelope(t, "tx0", common.HeaderType_ENDORSER_TRANSACTION, simpleTx("basic"))
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
 	if batch != nil {
 		t.Fatalf("expected nil batch (classic fabric tx must be skipped), got %+v", batch)
 	}
 }
 
-func TestBuildTxEventBatch_MalformedEnvelopeSkipped(t *testing.T) {
+func TestBuildBlockEvent_MalformedEnvelopeSkipped(t *testing.T) {
 	good := buildEnvelope(t, "tx-good", common.HeaderType_MESSAGE, simpleTx("basic"))
 	bad := &common.Envelope{Payload: []byte("not a valid protobuf payload \xff\xff")}
 	block := buildTestBlock(t, 1, []*common.Envelope{good, bad}, []byte{
@@ -252,13 +252,13 @@ func TestBuildTxEventBatch_MalformedEnvelopeSkipped(t *testing.T) {
 		byte(committerpb.Status_COMMITTED),
 	})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
 	if batch == nil || len(batch.Events) != 1 || batch.Events[0].Ref.TxId != "tx-good" {
 		t.Fatalf("expected only the well-formed tx to survive, got %+v", batch)
 	}
 }
 
-func TestBuildTxEventBatch_RefFieldsAndTxNumOrdering(t *testing.T) {
+func TestBuildBlockEvent_RefFieldsAndTxNumOrdering(t *testing.T) {
 	env0 := buildEnvelope(t, "tx0", common.HeaderType_MESSAGE, simpleTx("basic"))
 	env1 := buildEnvelope(t, "tx1", common.HeaderType_MESSAGE, simpleTx("basic"))
 	block := buildTestBlock(t, 42, []*common.Envelope{env0, env1}, []byte{
@@ -266,12 +266,12 @@ func TestBuildTxEventBatch_RefFieldsAndTxNumOrdering(t *testing.T) {
 		byte(committerpb.Status_COMMITTED),
 	})
 
-	batch := buildTxEventBatch(block, &committerpb.StreamAllRequest{})
+	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
 	if batch == nil || len(batch.Events) != 2 {
 		t.Fatalf("expected 2 events, got %+v", batch)
 	}
-	if batch.BlockNumber != 42 {
-		t.Errorf("BlockNumber: got %d, want 42", batch.BlockNumber)
+	if got := batch.GetHeader().GetNumber(); got != 42 {
+		t.Errorf("Header.Number: got %d, want 42", got)
 	}
 	for i, want := range []string{"tx0", "tx1"} {
 		ref := batch.Events[i].Ref

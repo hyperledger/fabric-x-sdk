@@ -52,6 +52,9 @@ func newLedger(db *state.VersionedDB, parser blocks.BlockParser, validator *bloc
 // otherwise empty and the block only has to be recognizable. That is enough for
 // protoutil.IsConfigBlock and anything else that classifies a block by inspecting
 // Data.Data[0] to behave as it would against a real network.
+//
+// Genesis chains onto nothing, so its PreviousHash is nil — as in Fabric, where a
+// client walking the chain stops there rather than finding a hash of nothing.
 func makeGenesisBlock() *common.Block {
 	env := &common.Envelope{
 		Payload: protoutil.MarshalOrPanic(&common.Payload{
@@ -62,7 +65,7 @@ func makeGenesisBlock() *common.Block {
 			},
 		}),
 	}
-	return makeBlock(0, []*common.Envelope{env})
+	return makeBlock(0, nil, []*common.Envelope{env})
 }
 
 // process validates the batch of transactions and stores them in a block.
@@ -70,11 +73,12 @@ func makeGenesisBlock() *common.Block {
 // as pending so that later transactions in the same block can detect intra-block
 // MVCC conflicts (first writer wins, matching real Fabric semantics).
 func (l *ledger) process(ctx context.Context, env []*common.Envelope) error {
-	// the number for the current block (process is only called synchronously).
-	blockNum := l.height()
+	// the number for the current block, and the header hash it chains onto
+	// (process is only called synchronously).
+	blockNum, prevHash := l.next()
 
 	// create block in fabric format just so we can parse it again. The status code in txFilter will be updated later.
-	fbl := makeBlock(blockNum, env)
+	fbl := makeBlock(blockNum, prevHash, env)
 
 	// get the read/write set and transaction id. We don't care about the other fields.
 	bl, err := l.parser.Parse(fbl)
@@ -103,19 +107,34 @@ func (l *ledger) process(ctx context.Context, env []*common.Envelope) error {
 	return l.commit(ctx, bl, fbl)
 }
 
-// makeBlock creates a minimal block.
-func makeBlock(blockNum uint64, envs []*common.Envelope) *common.Block {
+// makeBlock creates a minimal block that chains onto prevHash, which is the header
+// hash of block blockNum-1 (nil for genesis).
+//
+// The header carries the same two hashes a real ledger computes, the way Fabric's own
+// blockledger.CreateNextBlock does it: DataHash over the marshaled envelopes and
+// PreviousHash over the preceding header. Clients that walk the chain or recompute a
+// block hash therefore see a consistent chain rather than placeholders. Block metadata
+// is deliberately outside DataHash in Fabric, so filling in the txFilter afterwards
+// does not invalidate the header.
+func makeBlock(blockNum uint64, prevHash []byte, envs []*common.Envelope) *common.Block {
 	data := make([][]byte, len(envs))
 	for i, env := range envs {
 		b, _ := proto.Marshal(env)
 		data[i] = b
 	}
+	blockData := &common.BlockData{Data: data}
 
 	return &common.Block{
-		// Header: we skip the hashes.
-		Header: &common.BlockHeader{Number: blockNum},
+		Header: &common.BlockHeader{
+			Number:       blockNum,
+			PreviousHash: prevHash,
+			// ComputeBlockDataHash rather than BlockDataHash: the latter first
+			// insists the transactions are well formed, which rejects the empty
+			// blocks cutBlock produces and fabrictest's placeholder signatures.
+			DataHash: protoutil.ComputeBlockDataHash(blockData),
+		},
 		// Data contains the original transactions.
-		Data: &common.BlockData{Data: data},
+		Data: blockData,
 		// Metadata: signatures, last_config [deprecated], transactions_filter.
 		// Pre-allocate the txFilter so we can copy in the actual statuses later.
 		Metadata: &common.BlockMetadata{Metadata: [][]byte{{}, {}, make([]byte, len(envs))}},
@@ -185,6 +204,26 @@ func (l *ledger) height() uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return uint64(len(l.blocks))
+}
+
+// next reports the number the next block takes and the header hash it must chain
+// onto. Both come from one critical section so a block can never be numbered off
+// one tip and chained onto another.
+func (l *ledger) next() (uint64, []byte) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// blocks is never empty: newLedger seeds genesis and truncate keeps it.
+	return uint64(len(l.blocks)), protoutil.BlockHeaderHash(l.blocks[len(l.blocks)-1].Header)
+}
+
+// chainInfo reports what a real ledger reports for the chain tip: the height, the
+// tip block's own header hash, and the hash of the block before it (empty while
+// genesis is still the tip).
+func (l *ledger) chainInfo() (height uint64, currentHash, previousHash []byte) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	tip := l.blocks[len(l.blocks)-1].Header
+	return uint64(len(l.blocks)), protoutil.BlockHeaderHash(tip), tip.PreviousHash
 }
 
 // close shuts down the ledger by closing all subscriber channels (which causes

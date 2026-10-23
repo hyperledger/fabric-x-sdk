@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-x-common/api/committerpb"
+	"github.com/hyperledger/fabric-x-common/protoutil"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 	"github.com/hyperledger/fabric-x-sdk/blocks/fabricx"
@@ -45,9 +46,9 @@ func (p *Peer) SubscribeBlocks(ctx context.Context, startBlock uint64, processor
 	return p.Peer.SubscribeBlocks(ctx, p.channel, startBlock, nil, processor)
 }
 
-// BlockHeight returns the current block height from the committer's BlockQueryService.
+// BlockHeight returns the current block height from the committer's SidecarService.
 func (p *Peer) BlockHeight(ctx context.Context) (uint64, error) {
-	client := committerpb.NewBlockQueryServiceClient(p.Connection())
+	client := committerpb.NewSidecarServiceClient(p.Connection())
 	info, err := client.GetBlockchainInfo(ctx, &emptypb.Empty{})
 	if err != nil {
 		return 0, err
@@ -59,7 +60,7 @@ func (p *Peer) BlockHeight(ctx context.Context) (uint64, error) {
 // status events for the IDs sent on txIDs. It blocks until the context is canceled,
 // the stream closes, or an error occurs.
 func (p *Peer) Notify(ctx context.Context, txIDs <-chan []string, processor *notification.Processor, timeout time.Duration) error {
-	stream, err := committerpb.NewNotifierClient(p.Connection()).OpenNotificationStream(ctx)
+	stream, err := committerpb.NewSidecarServiceClient(p.Connection()).OpenNotificationStream(ctx)
 	if err != nil {
 		return fmt.Errorf("open notification stream: %w", err)
 	}
@@ -97,7 +98,7 @@ func (p *Peer) Notify(ctx context.Context, txIDs <-chan []string, processor *not
 	}
 }
 
-func notificationSendLoop(ctx context.Context, stream committerpb.Notifier_OpenNotificationStreamClient, txIDs <-chan []string, timeout time.Duration) error {
+func notificationSendLoop(ctx context.Context, stream committerpb.SidecarService_OpenNotificationStreamClient, txIDs <-chan []string, timeout time.Duration) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -120,7 +121,7 @@ func notificationSendLoop(ctx context.Context, stream committerpb.Notifier_OpenN
 	}
 }
 
-func notificationReceiveLoop(ctx context.Context, stream committerpb.Notifier_OpenNotificationStreamClient, processor *notification.Processor) error {
+func notificationReceiveLoop(ctx context.Context, stream committerpb.SidecarService_OpenNotificationStreamClient, processor *notification.Processor) error {
 	for {
 		res, err := stream.Recv()
 		if err != nil {
@@ -139,12 +140,12 @@ func notificationReceiveLoop(ctx context.Context, stream committerpb.Notifier_Op
 	}
 }
 
-// StreamAllTransactions opens the sidecar's StreamAllTransactions server-stream and
-// delivers each TxEventBatch to processor until the context is cancelled or an error occurs.
+// StreamAllTransactions opens the sidecar's StreamBlocks server-stream and delivers
+// each block's events to processor until the context is cancelled or an error occurs.
 func (p *Peer) StreamAllTransactions(ctx context.Context, req *notification.StreamAllRequest, processor notification.AllTxProcessor) error {
-	stream, err := committerpb.NewNotifierClient(p.Connection()).StreamAllTransactions(ctx, toProtoStreamAllRequest(req))
+	stream, err := committerpb.NewSidecarServiceClient(p.Connection()).StreamBlocks(ctx, toProtoStreamAllRequest(req))
 	if err != nil {
-		return fmt.Errorf("open stream-all-transactions: %w", err)
+		return fmt.Errorf("open stream-blocks: %w", err)
 	}
 
 	for {
@@ -155,18 +156,18 @@ func (p *Peer) StreamAllTransactions(ctx context.Context, req *notification.Stre
 			}
 			return fmt.Errorf("recv: %w", err)
 		}
-		sdkBatch := convertTxEventBatch(batch)
+		sdkBatch := convertBlockEvent(batch)
 		if err := processor.ProcessBatch(ctx, sdkBatch); err != nil {
 			return fmt.Errorf("process batch: %w", err)
 		}
 	}
 }
 
-func toProtoStreamAllRequest(req *notification.StreamAllRequest) *committerpb.StreamAllRequest {
+func toProtoStreamAllRequest(req *notification.StreamAllRequest) *committerpb.StreamBlocksRequest {
 	if req == nil {
-		return &committerpb.StreamAllRequest{}
+		return &committerpb.StreamBlocksRequest{}
 	}
-	return &committerpb.StreamAllRequest{
+	return &committerpb.StreamBlocksRequest{
 		FilterNamespaces:     req.FilterNamespaces,
 		FilterStatus:         toProtoFilterStatus(req.FilterStatus),
 		IncludeReadWriteSets: req.IncludeReadWriteSets,
@@ -210,7 +211,14 @@ func toProtoFilterStatus(statuses []blocks.Status) []committerpb.Status {
 	return out
 }
 
-func convertTxEventBatch(batch *committerpb.TxEventBatch) notification.AllTxBatch {
+// convertBlockEvent maps a sidecar BlockEvent onto the neutral AllTxBatch.
+//
+// The block hash is derived from the header here, with the same protoutil call the
+// block parser uses on the delivery path, so a block carries byte-identical hashes
+// whichever path delivered it. That matters where both paths feed one handler chain.
+// A header is always sent by the committer, but an older or partial one leaves the
+// hashes empty rather than hashing a nil header into a misleading value.
+func convertBlockEvent(batch *committerpb.BlockEvent) notification.AllTxBatch {
 	events := make([]notification.CommittedTxEvent, len(batch.Events))
 	for i, e := range batch.Events {
 		md := fabricx.DecodeMetadata(e.Metadata)
@@ -229,7 +237,13 @@ func convertTxEventBatch(batch *committerpb.TxEventBatch) notification.AllTxBatc
 		}
 		events[i].SetStatus(fabricx.StatusFromCommitterStatus(e.Status))
 	}
-	return notification.AllTxBatch{BlockNumber: batch.BlockNumber, Events: events}
+	out := notification.AllTxBatch{Events: events}
+	if h := batch.GetHeader(); h != nil {
+		out.BlockNumber = h.GetNumber()
+		out.Hash = protoutil.BlockHeaderHash(h)
+		out.ParentHash = h.GetPreviousHash()
+	}
+	return out
 }
 
 // convertTxStatuses maps sidecar TxStatus records onto neutral TxStatusEvents.
