@@ -19,14 +19,16 @@ import (
 
 	"github.com/hyperledger/fabric-lib-go/bccsp/utils"
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
+	"github.com/hyperledger/fabric-x-common/api/msppb"
 	"google.golang.org/protobuf/proto"
 )
 
 // Signer is an ECDSA fabric identity.
 type Signer struct {
-	priv_sk  *ecdsa.PrivateKey
-	signcert []byte
-	mspID    string
+	priv_sk       *ecdsa.PrivateKey
+	signcert      []byte
+	mspID         string
+	certificateID string
 }
 
 // SignerFromMSP creates a standard Fabric identity from an msp folder.
@@ -84,8 +86,29 @@ func sign(k *ecdsa.PrivateKey, message []byte) ([]byte, error) {
 	return utils.MarshalECDSASignature(r, s)
 }
 
-// Serialize returns the MSP identity as a serialized proto that can be embedded in Fabric envelopes.
+// WithCertificateID returns a copy that serializes a registered certificate ID
+// instead of the full certificate, for Fabric-X consumers supporting cached
+// identities. The original signer and signature generation are unchanged.
+//
+// certificateID must be the identity identifier assigned by the channel MSP to
+// this signer's certificate, which must already be registered in its known_certs
+// configuration. Hash configuration and certificate normalization can affect that
+// identifier. Only an empty ID is rejected here; registration and correspondence
+// to the signing key are checked by the receiving MSP, not by this method.
+func (s Signer) WithCertificateID(certificateID string) (Signer, error) {
+	if certificateID == "" {
+		return Signer{}, fmt.Errorf("certificate ID must not be empty")
+	}
+	s.certificateID = certificateID
+	return s, nil
+}
+
+// Serialize returns the MSP identity with its full certificate by default, or
+// with the registered certificate ID configured by WithCertificateID.
 func (s Signer) Serialize() ([]byte, error) {
+	if s.certificateID != "" {
+		return proto.Marshal(msppb.NewIdentityWithIDOfCert(s.mspID, s.certificateID))
+	}
 	return proto.Marshal(&msp.SerializedIdentity{Mspid: s.mspID, IdBytes: s.signcert})
 }
 

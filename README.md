@@ -55,6 +55,36 @@ To run the integration tests against a real Fabric-X network, see the [integrati
 | **notification** | Subscribes to transaction events from the Fabric-X sidecar. `Notifier` tracks specific transactions you submitted; `AllTxStreamer` delivers a real-time feed of every committed transaction (optionally filtered by namespace or status). |
 | **state**       | Provides a versioned insert-only database that can be used to construct a local world state. For example, an endorser could use it to perform actions on a recent state in order to generate a read/write set based on custom business logic. |
 
+## Cached endorser identities
+
+Fabric-X supports endorsements carrying a registered certificate ID instead of the
+full certificate. Keep the ordinary signer for client proposals and envelopes,
+and opt in separately for the endorser:
+
+```go
+signer, err := identity.SignerFromMSP(mspDir, mspID)
+if err != nil {
+    return err
+}
+endorser, err := signer.WithCertificateID(registeredCertificateID)
+if err != nil {
+    return err
+}
+builder := fabricx.NewEndorsementBuilder(endorser) // endorsement/fabricx
+```
+
+The certificate must already be registered in the channel MSP's `known_certs`
+configuration. Supply its registered identity identifier, for example the `Id`
+from that MSP identity's `GetIdentifier()`. The identifier depends on the MSP's
+hash configuration and certificate normalization; do not assume a hash of the
+PEM file is equivalent. The SDK rejects empty IDs but does not check registration
+or whether the ID belongs to the signing key. Those checks happen when the
+receiving MSP resolves the identity and verifies its signature.
+
+`signer` retains full-certificate serialization and both values sign in the same
+way. Use the compact value only with Fabric-X consumers supporting cached
+identities; this format is not generally supported by classic Fabric.
+
 ## Receiving transaction events
 
 There are three complementary mechanisms for receiving committed transaction data, each suited to a different need:
