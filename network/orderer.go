@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/orderer"
@@ -81,7 +82,12 @@ type Orderer struct {
 	streamCtx    context.Context
 	streamCancel context.CancelFunc
 	stream       orderer.AtomicBroadcast_BroadcastClient
+	streamDone   chan struct{} // closed when the stream's reply reader returns
 }
+
+// closeTimeout bounds how long Close waits for the orderer to reply to the
+// envelopes already sent.
+var closeTimeout = 2 * time.Second
 
 // Broadcast sends an envelope with an endorsed EndorserTransaction for ordering.
 // Uses a persistent stream with automatic recreation on failure.
@@ -136,8 +142,10 @@ func (o *Orderer) ensureStream() error {
 		return fmt.Errorf("open broadcast stream to %s: %w", o.addr, err)
 	}
 	o.stream = stream
-	cancel, logger, addr := o.streamCancel, o.logger, o.addr
+	o.streamDone = make(chan struct{})
+	cancel, done, logger, addr := o.streamCancel, o.streamDone, o.logger, o.addr
 	go func() {
+		defer close(done)
 		defer cancel()
 		for {
 			resp, err := stream.Recv()
@@ -153,12 +161,28 @@ func (o *Orderer) ensureStream() error {
 }
 
 // Close closes the connection to the orderer.
+//
+// Broadcast returns once an envelope is written to the stream, which may still be
+// buffered on the client. Close therefore half-closes the stream and waits for the
+// orderer to end it, which it does after answering the envelopes already sent (or until
+// closeTimeout passes), before tearing it down, so a short-lived client does not lose
+// its last envelopes.
 func (o *Orderer) Close() error {
 	o.mu.Lock()
 	o.closed = true
-	if o.streamCancel != nil {
-		o.streamCancel()
-	}
+	stream, done, cancel := o.stream, o.streamDone, o.streamCancel
 	o.mu.Unlock()
+
+	if stream != nil {
+		if err := stream.CloseSend(); err == nil {
+			select {
+			case <-done:
+			case <-time.After(closeTimeout):
+			}
+		}
+	}
+	if cancel != nil {
+		cancel()
+	}
 	return o.conn.Close()
 }

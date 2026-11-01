@@ -8,6 +8,7 @@ package network
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	ordererpb "github.com/hyperledger/fabric-protos-go-apiv2/orderer"
 	sdk "github.com/hyperledger/fabric-x-sdk"
+	"google.golang.org/grpc"
 )
 
 // recordingLogger keeps the warnings it is given.
@@ -111,4 +113,71 @@ func TestNewOrderer_NilLogger(t *testing.T) {
 	}
 	waitFor(t, 5*time.Second, func() bool { return fake.receivedCount() == 1 })
 	time.Sleep(100 * time.Millisecond) // a panic in the reader goroutine would have taken the test binary down by now
+}
+
+// TestOrderer_CloseDeliversPendingEnvelopes: a short-lived client (a CLI) broadcasts and
+// closes right away. Broadcast only buffers the envelope, so Close must not tear the
+// stream down before the orderer has received everything.
+func TestOrderer_CloseDeliversPendingEnvelopes(t *testing.T) {
+	addr, fake := startFakeOrderer(t)
+
+	o, err := NewOrderer(t.Context(), testOrdererConf(addr), nil)
+	if err != nil {
+		t.Fatalf("NewOrderer: %v", err)
+	}
+	const n = 100
+	for range n {
+		if err := o.Broadcast(t.Context(), &common.Envelope{Payload: []byte("p")}); err != nil {
+			t.Fatalf("Broadcast: %v", err)
+		}
+	}
+	if err := o.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if got := fake.receivedCount(); got != n {
+		t.Errorf("orderer received %d envelopes before Close returned, want %d", got, n)
+	}
+}
+
+// silentBroadcastServer receives envelopes but never replies, nor ends the stream.
+type silentBroadcastServer struct {
+	ordererpb.UnimplementedAtomicBroadcastServer
+}
+
+func (silentBroadcastServer) Broadcast(stream ordererpb.AtomicBroadcast_BroadcastServer) error {
+	<-stream.Context().Done()
+	return nil
+}
+
+// TestOrderer_CloseDoesNotHang: an orderer that never answers must not block Close
+// for longer than closeTimeout.
+func TestOrderer_CloseDoesNotHang(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	ordererpb.RegisterAtomicBroadcastServer(srv, silentBroadcastServer{})
+	go srv.Serve(lis) //nolint:errcheck
+	t.Cleanup(srv.Stop)
+
+	defer func(d time.Duration) { closeTimeout = d }(closeTimeout)
+	closeTimeout = 100 * time.Millisecond
+
+	o, err := NewOrderer(t.Context(), testOrdererConf(lis.Addr().String()), nil)
+	if err != nil {
+		t.Fatalf("NewOrderer: %v", err)
+	}
+	if err := o.Broadcast(t.Context(), &common.Envelope{Payload: []byte("p")}); err != nil {
+		t.Fatalf("Broadcast: %v", err)
+	}
+
+	start := time.Now()
+	if err := o.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("Close took %s", elapsed)
+	}
 }

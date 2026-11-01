@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
@@ -83,13 +84,14 @@ func (s Submitter) Submit(ctx context.Context, end sdk.Endorsement) error {
 	return nil
 }
 
-// Close closes the connections to all orderers.
+// Close closes the connections to all orderers. The orderers are closed in parallel,
+// since each may wait up to closeTimeout for its pending envelopes to be answered.
 func (s *Submitter) Close() error {
-	var errs []error
-	for _, o := range s.orderers {
-		if err := o.Close(); err != nil {
-			errs = append(errs, err)
-		}
+	errs := make([]error, len(s.orderers))
+	var wg sync.WaitGroup
+	for i, o := range s.orderers {
+		wg.Go(func() { errs[i] = o.Close() })
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
