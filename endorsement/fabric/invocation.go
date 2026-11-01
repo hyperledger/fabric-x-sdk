@@ -121,8 +121,9 @@ func (b InvocationBuilder) NewInvocation(channel, namespace, chaincodeVersion st
 // where proposal authenticity is guaranteed by other means (e.g., mtls,
 // network-level access controls, or when used for testing purposes only).
 //
-// Parse has no Fabric-X counterpart: Fabric-X has no remote-endorser-receives-a-
-// SignedProposal flow to parse at all.
+// Fabric-X doesn't prescribe a standard format for endorsement, but could use the
+// shape that is parsed here; the fabricx.Packager ensures the format is accepted
+// by Fabric-X committers.
 func Parse(signedProp *peer.SignedProposal, expectedTime time.Time) (endorsement.Invocation, error) {
 	prop, err := protoutil.UnmarshalProposal(signedProp.ProposalBytes)
 	if err != nil {

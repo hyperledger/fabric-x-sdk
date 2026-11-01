@@ -28,9 +28,12 @@ import (
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	bfabx "github.com/hyperledger/fabric-x-sdk/blocks/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/endorsement"
+	efab "github.com/hyperledger/fabric-x-sdk/endorsement/fabric"
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/identity"
+	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
 )
 
 // newMSPSigner writes a self-signed ECDSA identity to a temporary MSP folder in
@@ -265,6 +268,45 @@ func TestPackageTx_Signed(t *testing.T) {
 	}
 	if err := verifyEnvelope(env); err != nil {
 		t.Errorf("envelope does not verify: %v", err)
+	}
+}
+
+// TestCreateTx_RemoteEndorserProposal: a client sends remote endorsers a Fabric
+// SignedProposal, which fabric.Parse only accepts as an ENDORSER_TRANSACTION.
+// The packaged envelope must still be a MESSAGE, or Fabric-X ignores it.
+func TestCreateTx_RemoteEndorserProposal(t *testing.T) {
+	client, _ := newMSPSigner(t, "Org1MSP")
+	endorser, _ := newMSPSigner(t, "Org2MSP")
+
+	signedProp, err := nfab.NewSignedProposal(client, "mychannel", "myns", [][]byte{[]byte("fn")})
+	if err != nil {
+		t.Fatalf("NewSignedProposal: %v", err)
+	}
+	inv, err := efab.Parse(signedProp, time.Now())
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	res := endorsement.Success(blocks.ReadWriteSet{
+		Writes: []blocks.KVWrite{{Key: "a", Value: []byte("va")}},
+	}, "", nil, nil)
+	resp, err := efabx.NewEndorsementBuilder(endorser).Endorse(inv, res)
+	if err != nil {
+		t.Fatalf("Endorse: %v", err)
+	}
+
+	env, err := CreateTx(inv.Proposal, client, resp)
+	if err != nil {
+		t.Fatalf("CreateTx: %v", err)
+	}
+	tx, err := bfabx.NewBlockParser(sdk.NoOpLogger{}).ParseTx(env)
+	if err != nil {
+		t.Fatalf("ParseTx: %v", err)
+	}
+	if tx == nil {
+		t.Fatal("the Fabric-X parser skipped the transaction")
+	}
+	if tx.ID != inv.TxID {
+		t.Errorf("tx id %q, want %q", tx.ID, inv.TxID)
 	}
 }
 

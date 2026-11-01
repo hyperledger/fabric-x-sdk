@@ -56,6 +56,10 @@ func (p TxPackager) PackageTx(end sdk.Endorsement) (*common.Envelope, error) {
 
 // CreateTx is an adaptation of protoutil.CreateSignedTx, tweaked to work with Fabric-X payloads.
 // It assembles an envelope from proposal and resps, signed by signer if it is not nil.
+//
+// The proposal may come from fabricx.InvocationBuilder or be a Fabric SignedProposal
+// that remote endorsers parsed with fabric.Parse; either way the envelope is a
+// Fabric-X MESSAGE transaction.
 func CreateTx(proposal *peer.Proposal, signer sdk.Signer, resps ...*peer.ProposalResponse) (*common.Envelope, error) {
 	if len(resps) == 0 {
 		return nil, errors.New("at least one proposal response is required")
@@ -143,10 +147,22 @@ func CreateTx(proposal *peer.Proposal, signer sdk.Signer, resps ...*peer.Proposa
 		return nil, fmt.Errorf("marshal signature header: %w", err)
 	}
 
-	// the proposal's channel header (channel, tx id, timestamp) carries over unchanged.
+	// We can use classic Fabric proposals (see fabric.Parse) by replacing the
+	// ENDORSER_TRANSACTION with type MESSAGE. We remove the unused Extension.
 	hdr, err := protoutil.UnmarshalHeader(proposal.Header)
 	if err != nil {
 		return nil, err
+	}
+	chdr, err := protoutil.UnmarshalChannelHeader(hdr.ChannelHeader)
+	if err != nil {
+		return nil, err
+	}
+	if chdr.Type != int32(common.HeaderType_MESSAGE) {
+		chdr.Type = int32(common.HeaderType_MESSAGE)
+		chdr.Extension = nil
+		if hdr.ChannelHeader, err = proto.Marshal(chdr); err != nil {
+			return nil, fmt.Errorf("marshal channel header: %w", err)
+		}
 	}
 
 	// create the payload
