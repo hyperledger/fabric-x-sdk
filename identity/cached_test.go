@@ -28,6 +28,97 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestSignerWithCertificateHash(t *testing.T) {
+	_, keyPEM, certPEM := newTestECDSAIdentity(t)
+	// PEM formatting must not affect the certificate's DER-based identifier.
+	formattedCert := append([]byte("\n"), certPEM...)
+	signer, err := SignerFromMSP(writeTestMSP(t, "identity_sk", keyPEM, formattedCert), "Org1MSP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(certPEM)
+	digest := sha256.Sum256(block.Bytes)
+	wantID := hex.EncodeToString(digest[:])
+	custom, err := signer.WithCertificateID("custom-ID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := custom.WithCertificateHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, s := range map[string]Signer{"original": signer, "custom": custom, "hash": compact} {
+		t.Run(name, func(t *testing.T) {
+			for i := 0; i < 8; i++ {
+				t.Run("concurrent", func(t *testing.T) {
+					t.Parallel()
+					raw, err := s.Serialize()
+					if err != nil {
+						t.Fatal(err)
+					}
+					var id msppb.Identity
+					if err := proto.Unmarshal(raw, &id); err != nil {
+						t.Fatal(err)
+					}
+					if id.GetMspId() != "Org1MSP" {
+						t.Fatal("MSP ID changed")
+					}
+					switch name {
+					case "original":
+						if !bytes.Equal(id.GetCertificate(), formattedCert) {
+							t.Fatal("original full-certificate serialization changed")
+						}
+					case "custom":
+						if id.GetCertificateId() != "custom-ID" {
+							t.Fatal("custom ID changed")
+						}
+					case "hash":
+						if id.GetCertificateId() != wantID || len(id.GetCertificate()) != 0 {
+							t.Fatalf("hash identity = %v, want DER SHA-256 %s", &id, wantID)
+						}
+					}
+					// Returned bytes must not let a caller corrupt any signer's cache.
+					raw[0] ^= 0xff
+				})
+			}
+		})
+	}
+}
+
+func TestSignerWithCertificateHashRejectsInvalidCertificate(t *testing.T) {
+	for name, cert := range map[string][]byte{
+		"missing":        nil,
+		"not PEM":        []byte("invalid"),
+		"wrong PEM type": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte{1}}),
+		"invalid DER":    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte{1}}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := (Signer{signcert: cert}).WithCertificateHash(); err == nil {
+				t.Fatal("invalid certificate accepted")
+			}
+		})
+	}
+}
+
+func TestSignerRejectsUnserializableIdentityAtConstruction(t *testing.T) {
+	_, keyPEM, certPEM := newTestECDSAIdentity(t)
+	dir := writeTestMSP(t, "identity_sk", keyPEM, certPEM)
+	t.Run("MSP ID", func(t *testing.T) {
+		if _, err := SignerFromMSP(dir, string([]byte{0xff})); err == nil {
+			t.Fatal("unserializable MSP ID accepted")
+		}
+	})
+	signer, err := SignerFromMSP(dir, "Org1MSP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("certificate ID", func(t *testing.T) {
+		if _, err := signer.WithCertificateID(string([]byte{0xff})); err == nil {
+			t.Fatal("unserializable certificate ID accepted")
+		}
+	})
+}
+
 func TestSignerWithCertificateID(t *testing.T) {
 	_, keyPEM, certPEM := newTestECDSAIdentity(t)
 	signer, err := SignerFromMSP(writeTestMSP(t, "identity_sk", keyPEM, certPEM), "Org1MSP")
@@ -149,6 +240,39 @@ func TestSignerCertificateIDMSPLookup(t *testing.T) {
 			signer, err := SignerFromMSP(dir, "Org1MSP")
 			if err != nil {
 				t.Fatal(err)
+			}
+			hashed, err := signer.WithCertificateHash()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hashedBytes, err := hashed.Serialize()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var hashedID msppb.Identity
+			if err := proto.Unmarshal(hashedBytes, &hashedID); err != nil {
+				t.Fatal(err)
+			}
+			if hashedID.GetCertificateId() != hex.EncodeToString(rawDigest[:]) {
+				t.Fatal("certificate hash must use the original DER without normalization")
+			}
+			hashIdentity, hashErr := store.DeserializeIdentity(&hashedID)
+			if highS {
+				if hashErr == nil {
+					t.Fatal("raw high-S hash unexpectedly resolved after MSP normalization")
+				}
+			} else {
+				if hashErr != nil {
+					t.Fatal(hashErr)
+				}
+				message := []byte("default certificate hash endorsement")
+				signature, err := hashed.Sign(message)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := hashIdentity.Verify(message, signature); err != nil {
+					t.Fatal(err)
+				}
 			}
 			compact, err := signer.WithCertificateID(registered.GetIdentifier().Id)
 			if err != nil {

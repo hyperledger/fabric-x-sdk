@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -355,12 +356,19 @@ func TestPackageTx_CertificateIDEndorsement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hashed, err := endorser.WithCertificateHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certBlock, _ := pem.Decode(endorserCert)
+	certDigest := sha256.Sum256(certBlock.Bytes)
+	wantIDs := []string{"", certificateID, hex.EncodeToString(certDigest[:])}
 	inv, err := efabx.NewInvocationBuilder(client).NewInvocation("mychannel", "myns", "v1", 3, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var responses []*peer.ProposalResponse
-	for _, signer := range []sdk.Signer{endorser, compact} {
+	for _, signer := range []sdk.Signer{endorser, compact, hashed} {
 		resp, err := efabx.NewEndorsementBuilder(signer).Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
 			Writes: []blocks.KVWrite{{Key: "a", Value: []byte("va")}},
 		}, "", nil, nil))
@@ -388,7 +396,7 @@ func TestPackageTx_CertificateIDEndorsement(t *testing.T) {
 	if err := proto.Unmarshal(payl.Data, &tx); err != nil {
 		t.Fatal(err)
 	}
-	if len(tx.Namespaces) != 1 || len(tx.Endorsements) != 1 || len(tx.Endorsements[0].EndorsementsWithIdentity) != 2 {
+	if len(tx.Namespaces) != 1 || len(tx.Endorsements) != 1 || len(tx.Endorsements[0].EndorsementsWithIdentity) != 3 {
 		t.Fatalf("unexpected packaged transaction: %v", &tx)
 	}
 	cert, err := parseCert(endorserCert)
@@ -409,7 +417,7 @@ func TestPackageTx_CertificateIDEndorsement(t *testing.T) {
 			if !bytes.Equal(id.GetCertificate(), endorserCert) || id.GetCertificateId() != "" {
 				t.Fatal("full-certificate endorsement changed")
 			}
-		} else if id.GetCertificateId() != certificateID || len(id.GetCertificate()) != 0 {
+		} else if id.GetCertificateId() != wantIDs[i] || len(id.GetCertificate()) != 0 {
 			t.Fatal("certificate ID was not preserved")
 		}
 		if !ecdsa.VerifyASN1(cert.PublicKey.(*ecdsa.PublicKey), digest[:], endorsement.Endorsement) {

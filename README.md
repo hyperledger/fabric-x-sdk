@@ -61,12 +61,18 @@ Fabric-X supports endorsements carrying a registered certificate ID instead of t
 full certificate. Keep the ordinary signer for client proposals and envelopes,
 and opt in separately for the endorser:
 
+| Serialization | API | Use |
+| --- | --- | --- |
+| Full certificate | `identity.SignerFromMSP(mspDir, mspID)` | Default; works with Fabric and Fabric-X. |
+| DER certificate hash | `signer.WithCertificateHash()` | Fabric-X with SHA-256 identity identifiers and a low-S certificate, typically from configtxgen or fabric-ca. |
+| Registered certificate ID | `signer.WithCertificateID(registeredCertificateID)` | Fabric-X with a non-default MSP hash configuration or a certificate that the MSP normalizes. |
+
 ```go
 signer, err := identity.SignerFromMSP(mspDir, mspID)
 if err != nil {
     return err
 }
-endorser, err := signer.WithCertificateID(registeredCertificateID)
+endorser, err := signer.WithCertificateHash()
 if err != nil {
     return err
 }
@@ -74,12 +80,23 @@ builder := fabricx.NewEndorsementBuilder(endorser) // endorsement/fabricx
 ```
 
 The certificate must already be registered in the channel MSP's `known_certs`
-configuration. Supply its registered identity identifier, for example the `Id`
-from that MSP identity's `GetIdentifier()`. The identifier depends on the MSP's
-hash configuration and certificate normalization; do not assume a hash of the
-PEM file is equivalent. The SDK rejects empty IDs but does not check registration
-or whether the ID belongs to the signing key. Those checks happen when the
-receiving MSP resolves the identity and verifies its signature.
+configuration. `WithCertificateHash` derives its ID as the lowercase hex-encoded
+SHA-256 of the sign certificate's original DER bytes. It does not hash the PEM
+file or its base64 text, and it does not normalize certificate signatures. It
+returns an error for a malformed sign certificate.
+
+For non-default MSP identity hash settings or high-S ECDSA certificate signatures
+(possible with a custom CA, including OpenSSL), use
+`signer.WithCertificateID(registeredCertificateID)` instead. Supply the registered
+identifier, for example the `Id` from that MSP identity's `GetIdentifier()`, since
+MSP normalization can change the DER bytes and therefore the ID. Custom CA
+certificates that already meet the default hash and low-S requirements can use
+`WithCertificateHash` as well.
+
+`WithCertificateID` rejects empty IDs. Neither method registers the certificate,
+looks up its ID, or falls back to the full certificate. Registration and whether
+the ID belongs to the signing key are checked when the receiving MSP resolves the
+identity and verifies its signature.
 
 `signer` retains full-certificate serialization and both values sign in the same
 way. Use the compact value only with Fabric-X consumers supporting cached
