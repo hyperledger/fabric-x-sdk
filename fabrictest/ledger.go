@@ -48,10 +48,8 @@ func newLedger(db *state.VersionedDB, parser blocks.BlockParser, validator *bloc
 
 // makeGenesisBlock creates block 0: a config block holding a single CONFIG envelope,
 // mirroring the shape Fabric and Fabric-X networks start from. A real network stores
-// the channel configuration in it; fabrictest has no channel config, so the payload is
-// otherwise empty and the block only has to be recognizable. That is enough for
-// protoutil.IsConfigBlock and anything else that classifies a block by inspecting
-// Data.Data[0] to behave as it would against a real network.
+// the channel configuration in it; fabrictest uses an empty channel group with
+// sequence zero so parsers can decode it like a real genesis configuration.
 //
 // Genesis chains onto nothing, so its PreviousHash is nil — as in Fabric, where a
 // client walking the chain stops there rather than finding a hash of nothing.
@@ -63,6 +61,9 @@ func makeGenesisBlock() *common.Block {
 					Type: int32(common.HeaderType_CONFIG),
 				}),
 			},
+			Data: protoutil.MarshalOrPanic(&common.ConfigEnvelope{
+				Config: &common.Config{ChannelGroup: &common.ConfigGroup{}},
+			}),
 		}),
 	}
 	return makeBlock(0, nil, []*common.Envelope{env})

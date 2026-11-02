@@ -68,7 +68,21 @@ func (p BlockParser) Parse(b *common.Block) (blocks.Block, error) {
 			continue
 		}
 		if chdr.Type == int32(common.HeaderType_CONFIG) {
-			block.ConfigEnvelope = env
+			configEnvelope := &common.ConfigEnvelope{}
+			if err := proto.Unmarshal(pl.Data, configEnvelope); err != nil {
+				return block, fmt.Errorf("CONFIG [%d:%d]: config envelope: %w", block.Number, txNum, err)
+			}
+			if configEnvelope.Config == nil {
+				return block, fmt.Errorf("CONFIG [%d:%d]: missing config", block.Number, txNum)
+			}
+			configBytes, err := proto.Marshal(configEnvelope.Config)
+			if err != nil {
+				return block, fmt.Errorf("CONFIG [%d:%d]: marshal config: %w", block.Number, txNum, err)
+			}
+			block.ConfigTransaction = &blocks.ConfigTransaction{
+				Sequence: configEnvelope.Config.Sequence,
+				Config:   configBytes,
+			}
 			p.log.Infof("CONFIG envelope [%d:%d]", block.Number, txNum)
 			continue
 		}

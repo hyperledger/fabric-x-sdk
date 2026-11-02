@@ -31,7 +31,9 @@ func buildConfigEnvelope(t *testing.T, txID string) *common.Envelope {
 	t.Helper()
 	update := buildTypedEnvelope(t, int32(common.HeaderType_CONFIG_UPDATE), txID+"-update", nil)
 	return buildTypedEnvelope(t, int32(common.HeaderType_CONFIG), txID, mustMarshal(t, &common.ConfigEnvelope{
-		Config:     &common.Config{Sequence: 7, ChannelGroup: &common.ConfigGroup{}},
+		Config: &common.Config{Sequence: 7, ChannelGroup: &common.ConfigGroup{
+			Values: map[string]*common.ConfigValue{"example": {Version: 2, Value: []byte("channel-config"), ModPolicy: "Admins"}},
+		}},
 		LastUpdate: update,
 	}))
 }
@@ -61,7 +63,7 @@ func (l *parserLog) Warnf(format string, args ...any) {
 	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
 }
 
-func TestParse_ConfigEnvelope(t *testing.T) {
+func TestParse_ConfigTransaction(t *testing.T) {
 	for _, number := range []uint64{0, 42} {
 		t.Run(fmt.Sprint(number), func(t *testing.T) {
 			env := buildConfigEnvelope(t, "config")
@@ -72,8 +74,8 @@ func TestParse_ConfigEnvelope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !proto.Equal(block.ConfigEnvelope, env) {
-				t.Fatalf("ConfigEnvelope = %v, want original envelope %v", block.ConfigEnvelope, env)
+			if !configMatches(t, block.ConfigTransaction, env) {
+				t.Fatalf("ConfigTransaction = %v, want config from envelope %v", block.ConfigTransaction, env)
 			}
 			if block.Transactions == nil || len(block.Transactions) != 0 {
 				t.Errorf("Transactions = %v, want nonnil empty slice", block.Transactions)
@@ -93,15 +95,60 @@ func TestParse_ConfigEnvelope(t *testing.T) {
 	}
 }
 
-func TestParse_ConfigPayloadOpaque(t *testing.T) {
-	env := buildTypedEnvelope(t, int32(common.HeaderType_CONFIG), "opaque", []byte{0xff})
-	block, err := NewBlockParser(sdk.NoOpLogger{}).Parse(buildBlock(t, 42, []*common.Envelope{env}, nil))
-	if err != nil {
+func TestParse_MalformedConfigFails(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"malformed_envelope", []byte{0xff}, "config envelope"},
+		{"malformed_config", []byte{0x0a, 0x01, 0xff}, "config envelope"},
+		{"empty_envelope", nil, "missing config"},
+		{"last_update_only", mustMarshal(t, &common.ConfigEnvelope{LastUpdate: &common.Envelope{Payload: []byte("update")}}), "missing config"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := buildTypedEnvelope(t, int32(common.HeaderType_CONFIG), "bad-config", tc.data)
+			b := buildBlock(t, 42, []*common.Envelope{env, buildApplicationEnvelope(t, "after")}, nil)
+			log := &parserLog{}
+			block, err := NewBlockParser(log).Parse(b)
+			if err == nil || !strings.Contains(err.Error(), "CONFIG [42:0]: "+tc.want) {
+				t.Fatalf("error = %v, want CONFIG location and %q", err, tc.want)
+			}
+			if block.ConfigTransaction != nil || len(block.Transactions) != 0 || len(log.infos) != 0 {
+				t.Fatalf("malformed CONFIG was accepted or parsing continued: %+v, logs=%v", block, log.infos)
+			}
+		})
+	}
+}
+
+func TestParse_ZeroConfigSequence(t *testing.T) {
+	env := buildTypedEnvelope(t, int32(common.HeaderType_CONFIG), "genesis", mustMarshal(t, &common.ConfigEnvelope{Config: &common.Config{}}))
+	block, err := NewBlockParser(sdk.NoOpLogger{}).Parse(buildBlock(t, 0, []*common.Envelope{env}, nil))
+	if err != nil || !configMatches(t, block.ConfigTransaction, env) {
+		t.Fatalf("zero-sequence config: block=%+v err=%v", block, err)
+	}
+}
+
+// configMatches checks the exposed sequence and decoded config, excluding the
+// outer envelope and LastUpdate, which are deliberately not part of the SDK API.
+func configMatches(t *testing.T, got *blocks.ConfigTransaction, env *common.Envelope) bool {
+	t.Helper()
+	payload := &common.Payload{}
+	if err := proto.Unmarshal(env.Payload, payload); err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(block.ConfigEnvelope, env) || len(block.Transactions) != 0 {
-		t.Fatalf("CONFIG with opaque data was not preserved: %+v", block)
+	want := &common.ConfigEnvelope{}
+	if err := proto.Unmarshal(payload.Data, want); err != nil {
+		t.Fatal(err)
 	}
+	if got == nil || got.Sequence != want.Config.Sequence {
+		return false
+	}
+	decoded := &common.Config{}
+	if err := proto.Unmarshal(got.Config, decoded); err != nil {
+		t.Fatalf("invalid serialized config: %v", err)
+	}
+	return proto.Equal(decoded, want.Config)
 }
 
 func TestParseTx_ConfigSkipped(t *testing.T) {
@@ -133,7 +180,7 @@ func TestParse_NonConfigEnvelope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if block.ConfigEnvelope != nil || len(block.Transactions) != tc.want {
+			if block.ConfigTransaction != nil || len(block.Transactions) != tc.want {
 				t.Fatalf("unexpected block: %+v", block)
 			}
 			if tc.want == 1 {
@@ -158,7 +205,7 @@ func TestParse_ConfigThenApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(block.ConfigEnvelope, config) || len(block.Transactions) != 2 {
+	if !configMatches(t, block.ConfigTransaction, config) || len(block.Transactions) != 2 {
 		t.Fatalf("unexpected block: %+v", block)
 	}
 	a, btx := block.Transactions[0], block.Transactions[1]
@@ -194,7 +241,7 @@ func TestParse_MalformedEnvelopeRecovery(t *testing.T) {
 			}
 			if len(block.Transactions) != 1 || block.Transactions[0].Number != 1 ||
 				block.Transactions[0].ID != "app" || block.Transactions[0].Status != blocks.StatusCommitted ||
-				!proto.Equal(block.ConfigEnvelope, config) {
+				!configMatches(t, block.ConfigTransaction, config) {
 				t.Fatalf("valid envelopes after malformed input were lost or changed: %+v", block)
 			}
 			if len(log.warnings) != 1 || !strings.HasPrefix(log.warnings[0], tc.want) {
@@ -212,7 +259,7 @@ func TestParse_ConfigMetadata(t *testing.T) {
 	config := buildConfigEnvelope(t, "config")
 	t.Run("empty_filter", func(t *testing.T) {
 		block, err := p.Parse(buildBlock(t, 42, []*common.Envelope{config}, nil))
-		if err != nil || !proto.Equal(block.ConfigEnvelope, config) {
+		if err != nil || !configMatches(t, block.ConfigTransaction, config) {
 			t.Fatalf("empty filter: block=%+v err=%v", block, err)
 		}
 	})
@@ -230,7 +277,7 @@ func TestParse_ConfigMetadata(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !proto.Equal(block.ConfigEnvelope, config) || len(block.Transactions) != 1 {
+		if !configMatches(t, block.ConfigTransaction, config) || len(block.Transactions) != 1 {
 			t.Fatalf("unexpected block: %+v", block)
 		}
 		tx := block.Transactions[0]
@@ -253,7 +300,7 @@ func TestParse_EmptyChannelHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if block.ConfigEnvelope != nil || len(block.Transactions) != 0 {
+	if block.ConfigTransaction != nil || len(block.Transactions) != 0 {
 		t.Fatalf("empty channel header behavior changed: %+v", block)
 	}
 

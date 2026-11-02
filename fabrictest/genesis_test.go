@@ -122,7 +122,7 @@ func TestGenesisBlock_DeliveredFromZero(t *testing.T) {
 }
 
 // TestGenesisBlock_NotReportedAsTransaction checks that genesis is exposed as a
-// CONFIG envelope, separately from application transactions and world-state writes.
+// configuration transaction, separately from application transactions and world-state writes.
 func TestGenesisBlock_NotReportedAsTransaction(t *testing.T) {
 	for _, networkType := range networkTypes {
 		t.Run(networkType, func(t *testing.T) {
@@ -143,8 +143,23 @@ func TestGenesisBlock_NotReportedAsTransaction(t *testing.T) {
 			if err := proto.Unmarshal(genesis.Data.Data[0], env); err != nil {
 				t.Fatalf("unmarshal genesis envelope: %v", err)
 			}
-			if !proto.Equal(bl.ConfigEnvelope, env) {
-				t.Errorf("ConfigEnvelope = %v, want genesis envelope %v", bl.ConfigEnvelope, env)
+			payload := &common.Payload{}
+			if err := proto.Unmarshal(env.Payload, payload); err != nil {
+				t.Fatal(err)
+			}
+			configEnvelope := &common.ConfigEnvelope{}
+			if err := proto.Unmarshal(payload.Data, configEnvelope); err != nil {
+				t.Fatal(err)
+			}
+			if bl.ConfigTransaction == nil || bl.ConfigTransaction.Sequence != 0 {
+				t.Fatalf("genesis configuration = %+v, want sequence zero", bl.ConfigTransaction)
+			}
+			config := &common.Config{}
+			if err := proto.Unmarshal(bl.ConfigTransaction.Config, config); err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(config, configEnvelope.Config) {
+				t.Errorf("config = %v, want genesis config %v", config, configEnvelope.Config)
 			}
 
 			// BlockNumber reports 0 for a fresh store, so the synchronizer starts at 0

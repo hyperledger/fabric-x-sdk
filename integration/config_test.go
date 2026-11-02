@@ -44,25 +44,18 @@ func TestSynchronizer_ConfigGenesis(t *testing.T) {
 					}
 				}
 			}
-			if genesis.ConfigEnvelope == nil {
-				t.Fatal("handler received genesis without ConfigEnvelope")
+			if genesis.ConfigTransaction == nil {
+				t.Fatal("handler received genesis without ConfigTransaction")
 			}
 			if len(genesis.Transactions) != 0 {
 				t.Errorf("genesis contains %d application transactions", len(genesis.Transactions))
 			}
-			payload := &common.Payload{}
-			if err := proto.Unmarshal(genesis.ConfigEnvelope.Payload, payload); err != nil {
+			config := &common.Config{}
+			if err := proto.Unmarshal(genesis.ConfigTransaction.Config, config); err != nil {
 				t.Fatal(err)
 			}
-			if payload.Header == nil {
-				t.Fatal("genesis payload has no header")
-			}
-			header := &common.ChannelHeader{}
-			if err := proto.Unmarshal(payload.Header.ChannelHeader, header); err != nil {
-				t.Fatal(err)
-			}
-			if header.Type != int32(common.HeaderType_CONFIG) {
-				t.Errorf("genesis envelope type = %d, want CONFIG", header.Type)
+			if genesis.ConfigTransaction.Sequence != 0 || config.Sequence != 0 || config.ChannelGroup == nil {
+				t.Errorf("unexpected genesis config: transaction=%+v config=%v", genesis.ConfigTransaction, config)
 			}
 			if number, err := s.localDB.BlockNumber(t.Context()); err != nil || number != 0 {
 				t.Errorf("BlockNumber = (%d, %v), want (0, nil)", number, err)
