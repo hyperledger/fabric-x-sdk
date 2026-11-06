@@ -64,6 +64,15 @@ type Block struct {
 	// in the Transactions slice is not guaranteed to be the same as in
 	// the actual block: use the tx.Number field for that.
 	Transactions []Transaction
+	// ConfigTransaction is set only for a CONFIG envelope, including genesis.
+	ConfigTransaction *ConfigTransaction
+}
+
+// ConfigTransaction contains a channel configuration committed by the orderer.
+// It is separate from application transactions.
+type ConfigTransaction struct {
+	Sequence uint64 // strictly increasing per channel; genesis may start at zero
+	Config   []byte // proto-encoded common.Config, including its sequence number
 }
 
 // Transaction is a parsed endorser transaction from a block. Both valid and invalid
