@@ -453,7 +453,7 @@ func (s *testSetup) waitForKeyValue(t *testing.T, key, value string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		rec, err := s.localDB.GetCurrent(s.namespace, key)
+		rec, err := s.localDB.Get(s.namespace, key)
 		if err == nil && rec != nil && string(rec.Value) == value {
 			return
 		}
@@ -493,10 +493,7 @@ func (s *testSetup) sentinel(t *testing.T, sentinelKey string) {
 // Pass blockNum=0 to use the current block height.
 func (s *testSetup) simulate(t *testing.T, blockNum uint64, key string) ([]byte, blocks.ReadWriteSet) {
 	t.Helper()
-	sim, err := state.NewSimulationStore(t.Context(), s.localDB, s.namespace, blockNum, s.monotonicVersions)
-	if err != nil {
-		t.Fatalf("NewSimulationStore: %v", err)
-	}
+	sim := s.newSimStore(t, blockNum)
 	val, err := sim.GetState(key)
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
@@ -507,11 +504,18 @@ func (s *testSetup) simulate(t *testing.T, blockNum uint64, key string) ([]byte,
 // newSimStore creates a SimulationStore at blockNum. Pass 0 to use the current block height.
 func (s *testSetup) newSimStore(t *testing.T, blockNum uint64) *state.SimulationStore {
 	t.Helper()
-	sim, err := state.NewSimulationStore(t.Context(), s.localDB, s.namespace, blockNum, s.monotonicVersions)
-	if err != nil {
-		t.Fatalf("NewSimulationStore: %v", err)
+	if blockNum == 0 {
+		var err error
+		if blockNum, err = s.localDB.BlockNumber(t.Context()); err != nil {
+			t.Fatalf("BlockNumber: %v", err)
+		}
 	}
-	return sim
+	snap, err := s.localDB.SnapshotAt(t.Context(), blockNum)
+	if err != nil {
+		t.Fatalf("SnapshotAt: %v", err)
+	}
+	t.Cleanup(func() { _ = snap.Close() })
+	return state.NewSimulationStore(snap, s.namespace, blockNum, s.monotonicVersions)
 }
 
 // --- test signer ---

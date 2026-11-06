@@ -62,7 +62,7 @@ func TestInit(t *testing.T) {
 
 func TestGet_NotFound(t *testing.T) {
 	db := newTestDB(t)
-	got, err := db.Get("ns", "missing", 99)
+	got, err := db.GetAt("ns", "missing", 99)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,22 +76,22 @@ func TestGet_VersionBound(t *testing.T) {
 	mustWrite(t, db, "ns", "k", 5, 0, []byte("v5"))
 	mustWrite(t, db, "ns", "k", 10, 0, []byte("v10"))
 
-	got, _ := db.Get("ns", "k", 7)
+	got, _ := db.GetAt("ns", "k", 7)
 	if got == nil || string(got.Value) != "v5" {
 		t.Errorf("expected v5, got %+v", got)
 	}
-	got, _ = db.Get("ns", "k", 10)
+	got, _ = db.GetAt("ns", "k", 10)
 	if got == nil || string(got.Value) != "v10" {
 		t.Errorf("expected v10, got %+v", got)
 	}
 }
 
-func TestGetCurrent(t *testing.T) {
+func TestGet_Latest(t *testing.T) {
 	db := newTestDB(t)
 	mustWrite(t, db, "ns", "k", 1, 0, []byte("old"))
 	mustWrite(t, db, "ns", "k", 5, 0, []byte("new"))
 
-	got, err := db.GetCurrent("ns", "k")
+	got, err := db.Get("ns", "k")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestUpdateWorldState_ReplayIsNoop(t *testing.T) {
 	if err := db.UpdateWorldState(t.Context(), bl); err != nil {
 		t.Fatal(err)
 	}
-	before, err := db.GetCurrent("ns", "a")
+	before, err := db.Get("ns", "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestUpdateWorldState_ReplayIsNoop(t *testing.T) {
 		t.Fatalf("expected replay to succeed, got: %v", err)
 	}
 
-	after, err := db.GetCurrent("ns", "a")
+	after, err := db.Get("ns", "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,14 +204,14 @@ func TestUpdateWorldState_GenuineConflictErrors(t *testing.T) {
 
 	// The whole call must roll back: "a" keeps its original value, and "b" (from the
 	// same failed batch) must not have been inserted either.
-	a, err := db.GetCurrent("ns", "a")
+	a, err := db.Get("ns", "a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a == nil || string(a.Value) != "va" {
 		t.Errorf("expected ns/a to keep original value, got %+v", a)
 	}
-	b, err := db.GetCurrent("ns", "b")
+	b, err := db.Get("ns", "b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestVersion_StartsAtZero(t *testing.T) {
 	db := newTestDB(t)
 	mustWrite(t, db, "ns", "k", 1, 0, []byte("v"))
 
-	got, err := db.GetCurrent("ns", "k")
+	got, err := db.Get("ns", "k")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,8 +270,8 @@ func TestVersion_IndependentKeys(t *testing.T) {
 		},
 	})
 
-	a, _ := db.GetCurrent("ns", "a")
-	b, _ := db.GetCurrent("ns", "b")
+	a, _ := db.Get("ns", "a")
+	b, _ := db.Get("ns", "b")
 	if a == nil || b == nil {
 		t.Fatal("expected both keys to exist")
 	}
@@ -301,5 +301,88 @@ func TestUpdateWorldState_BlockProgress(t *testing.T) {
 	}
 	if n != 2 {
 		t.Errorf("expected block 2, got %d", n)
+	}
+}
+
+// valueAt reads key from snap, returning "" for an absent key.
+func valueAt(t *testing.T, snap Snapshot, key string) string {
+	t.Helper()
+	rec, err := snap.Get("ns", key)
+	if err != nil {
+		t.Fatalf("Get %s: %v", key, err)
+	}
+	if rec == nil {
+		return ""
+	}
+	return string(rec.Value)
+}
+
+func TestSnapshot_IgnoresLaterBlocks(t *testing.T) {
+	db := newTestDB(t)
+	mustWrite(t, db, "ns", "k", 1, 0, []byte("v1"))
+
+	snap, err := db.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close() //nolint:errcheck
+
+	mustWrite(t, db, "ns", "k", 2, 0, []byte("v2"))
+	mustWrite(t, db, "ns", "new", 2, 1, []byte("n"))
+
+	if got := valueAt(t, snap, "k"); got != "v1" {
+		t.Errorf("snapshot read %q, want v1", got)
+	}
+	if got := valueAt(t, snap, "new"); got != "" {
+		t.Errorf("snapshot sees a key written later: %q", got)
+	}
+	rec, err := db.Get("ns", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil || string(rec.Value) != "v2" {
+		t.Errorf("Get = %+v, want v2", rec)
+	}
+}
+
+func TestSnapshotAt_PastBlock(t *testing.T) {
+	db := newTestDB(t)
+	mustWrite(t, db, "ns", "k", 1, 0, []byte("v1"))
+	mustWrite(t, db, "ns", "k", 3, 0, []byte("v3"))
+
+	for _, tc := range []struct {
+		block uint64
+		want  string
+	}{
+		{0, ""},
+		{1, "v1"},
+		{2, "v1"}, // no write at 2: state is unchanged since 1
+		{3, "v3"},
+	} {
+		snap, err := db.SnapshotAt(t.Context(), tc.block)
+		if err != nil {
+			t.Fatalf("SnapshotAt(%d): %v", tc.block, err)
+		}
+		if got := valueAt(t, snap, "k"); got != tc.want {
+			t.Errorf("SnapshotAt(%d) read %q, want %q", tc.block, got, tc.want)
+		}
+		_ = snap.Close()
+	}
+}
+
+func TestSnapshotAt_FutureBlockIsCapped(t *testing.T) {
+	db := newTestDB(t)
+	mustWrite(t, db, "ns", "k", 1, 0, []byte("v1"))
+
+	snap, err := db.SnapshotAt(t.Context(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close() //nolint:errcheck
+
+	// A block at or below the requested height arriving later must not show.
+	mustWrite(t, db, "ns", "k", 2, 0, []byte("v2"))
+	if got := valueAt(t, snap, "k"); got != "v1" {
+		t.Errorf("snapshot read %q, want v1", got)
 	}
 }

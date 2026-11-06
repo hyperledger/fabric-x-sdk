@@ -24,7 +24,7 @@ func TestRevert_NextBlockReusesNumber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := Start(t.Context(), "basic", "fabric-x", Config{}, ext.CurrentRecordGetter())
+	n, err := Start(t.Context(), "basic", "fabric-x", Config{}, ext)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestRevert_ReplacesBlockWithDifferentTx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := Start(t.Context(), "basic", "fabric-x", Config{}, ext.CurrentRecordGetter())
+	n, err := Start(t.Context(), "basic", "fabric-x", Config{}, ext)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

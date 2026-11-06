@@ -63,7 +63,7 @@ func Start(ctx context.Context, namespace, networkType string, cfg Config, db1 b
 		if err != nil {
 			return nil, err
 		}
-		rg = db.CurrentRecordGetter()
+		rg = db
 	}
 
 	// some specifics for either fabric or fabric-x

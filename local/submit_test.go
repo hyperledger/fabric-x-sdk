@@ -56,7 +56,7 @@ func newTestDB(t *testing.T) *state.VersionedDB {
 
 func newSubmitter(t *testing.T, db *state.VersionedDB, rws blocks.ReadWriteSet) *LocalSubmitter {
 	t.Helper()
-	return NewLocalSubmitter(db, db.CurrentRecordGetter(), "chan1", "ns",
+	return NewLocalSubmitter(db, db, "chan1", "ns",
 		&fixedPackager{env: &common.Envelope{}},
 		&fixedParser{rws: rws, txID: "txid"},
 		false,
@@ -76,7 +76,7 @@ func TestLocalSubmitter_Submit_BlindWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := db.GetCurrent("ns", "k")
+	got, err := db.Get("ns", "k")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,11 +8,12 @@ package queryservice_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/hyperledger/fabric-x-sdk/blocks"
-
+	"github.com/hyperledger/fabric-x-sdk/state"
 	"github.com/hyperledger/fabric-x-sdk/state/queryservice"
 )
 
@@ -75,7 +76,7 @@ func TestStoreSnapshotReadsThroughOneView(t *testing.T) {
 	client := &fakeClient{rows: map[string]queryservice.Row{"k1": {Key: []byte("k1"), Value: []byte("v1")}}}
 	store := queryservice.NewStore(client)
 
-	snap, err := store.NewSnapshot()
+	snap, err := store.Snapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestStoreSnapshotCachesReads(t *testing.T) {
 	client := &fakeClient{rows: map[string]queryservice.Row{"k1": {Key: []byte("k1"), Value: []byte("v1")}}}
 	store := queryservice.NewStore(client)
 
-	snap, err := store.NewSnapshot()
+	snap, err := store.Snapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +120,20 @@ func TestStoreSnapshotCachesReads(t *testing.T) {
 	}
 	if client.reads != 2 {
 		t.Errorf("client reads = %d, want 2 (one per key)", client.reads)
+	}
+}
+
+func TestStoreSnapshotAtHasNoHistory(t *testing.T) {
+	client := &fakeClient{}
+	store := queryservice.NewStore(client)
+
+	for _, block := range []uint64{0, 5} {
+		if _, err := store.SnapshotAt(context.Background(), block); !errors.Is(err, state.ErrHistoryUnavailable) {
+			t.Errorf("SnapshotAt(%d) error = %v, want state.ErrHistoryUnavailable", block, err)
+		}
+	}
+	if client.begun != 0 {
+		t.Errorf("views begun = %d, want 0", client.begun)
 	}
 }
 

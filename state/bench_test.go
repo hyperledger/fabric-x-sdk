@@ -293,7 +293,7 @@ func BenchmarkGetState(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for range b.N {
-				if _, err := read.Get(benchNamespace, hexKey(kg.next()), preloadLastBlock); err != nil {
+				if _, err := read.GetAt(benchNamespace, hexKey(kg.next()), preloadLastBlock); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -334,15 +334,17 @@ func BenchmarkSimulation(b *testing.B) {
 					b.ResetTimer()
 					b.ReportAllocs()
 					for range b.N {
-						sim, err := state.NewSimulationStore(ctx, read, benchNamespace, preloadLastBlock, false)
+						snap, err := read.SnapshotAt(ctx, preloadLastBlock)
 						if err != nil {
 							b.Fatal(err)
 						}
+						sim := state.NewSimulationStore(snap, benchNamespace, preloadLastBlock, false)
 						for range readsPerSim {
 							if _, err := sim.GetState(hexKey(kg.next())); err != nil {
 								b.Fatal(err)
 							}
 						}
+						_ = snap.Close()
 						for range 5 {
 							if err := sim.PutState(hexKey(kg.next()), benchValue[:]); err != nil {
 								b.Fatal(err)
@@ -436,16 +438,18 @@ func BenchmarkMixed(b *testing.B) {
 				b.ResetTimer()
 				for range b.N {
 					n := lastBlock.Load()
-					sim, err := state.NewSimulationStore(ctx, read, benchNamespace, n, false)
+					snap, err := read.SnapshotAt(ctx, n)
 					if err != nil {
 						b.Fatal(err)
 					}
+					sim := state.NewSimulationStore(snap, benchNamespace, n, false)
 					for range readsPerSim {
 						if _, err := sim.GetState(hexKey(kg.next())); err != nil {
 							b.Fatal(err)
 						}
 					}
 					sim.Result()
+					_ = snap.Close()
 				}
 				readsPerS = float64(b.N*readsPerSim) / b.Elapsed().Seconds()
 				b.ReportMetric(readsPerS, "reads/s")

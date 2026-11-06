@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package state
 
 import (
-	"context"
 	"errors"
 
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -26,7 +25,7 @@ type Log struct {
 // Function signatures correspond to the 'chaincode stub' where possible.
 type SimulationStore struct {
 	namespace         string
-	store             ReadStore
+	snap              Snapshot
 	blockNum          uint64
 	reads             map[string]blocks.KVRead
 	writes            map[string]blocks.KVWrite
@@ -34,32 +33,20 @@ type SimulationStore struct {
 	monotonicVersions bool // if true, KVRead.Version is built from WriteRecord.Version (fabric-x MVCC semantics)
 }
 
-// ReadStore is the read interface required to back a SimulationStore.
-type ReadStore interface {
-	Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error)
-	BlockNumber(ctx context.Context) (uint64, error)
-}
-
-// NewSimulationStore returns a read-only snapshot that records reads and writes.
-// If blockNum is 0, the current block number is queried from store and used as the snapshot height.
+// NewSimulationStore returns a SimulationStore that reads from snap, a view of
+// the state at blockNum, and records reads and writes. The caller owns snap and
+// closes it when the simulation is done.
 // monotonicVersions controls MVCC semantics: when true, KVRead versions use the per-key
 // monotonic version counter (Fabric-X); when false, they use (blockNum, txNum) (standard Fabric).
-func NewSimulationStore(ctx context.Context, store ReadStore, namespace string, blockNum uint64, monotonicVersions bool) (*SimulationStore, error) {
-	if blockNum == 0 {
-		var err error
-		blockNum, err = store.BlockNumber(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
+func NewSimulationStore(snap Snapshot, namespace string, blockNum uint64, monotonicVersions bool) *SimulationStore {
 	return &SimulationStore{
 		namespace:         namespace,
-		store:             store,
+		snap:              snap,
 		blockNum:          blockNum,
 		monotonicVersions: monotonicVersions,
 		reads:             make(map[string]blocks.KVRead),
 		writes:            make(map[string]blocks.KVWrite),
-	}, nil
+	}
 }
 
 // GetState behaves similar to in Fabric, with the exception that we _can_ read
@@ -79,7 +66,7 @@ func (s *SimulationStore) GetState(key string) ([]byte, error) {
 	}
 
 	// get from store snapshot
-	record, err := s.store.Get(s.namespace, key, s.blockNum)
+	record, err := s.snap.Get(s.namespace, key)
 	if err != nil {
 		return nil, err
 	}
