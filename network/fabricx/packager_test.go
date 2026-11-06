@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-common/protoutil"
 	sdk "github.com/hyperledger/fabric-x-sdk"
 	"github.com/hyperledger/fabric-x-sdk/blocks"
@@ -34,6 +36,7 @@ import (
 	efabx "github.com/hyperledger/fabric-x-sdk/endorsement/fabricx"
 	"github.com/hyperledger/fabric-x-sdk/identity"
 	nfab "github.com/hyperledger/fabric-x-sdk/network/fabric"
+	"google.golang.org/protobuf/proto"
 )
 
 // newMSPSigner writes a self-signed ECDSA identity to a temporary MSP folder in
@@ -342,5 +345,83 @@ func TestCreateTx_NeedsResponses(t *testing.T) {
 
 	if _, err := CreateTx(end.Proposal, client); err == nil {
 		t.Error("expected an error without proposal responses")
+	}
+}
+
+func TestPackageTx_CertificateIDEndorsement(t *testing.T) {
+	client, clientCert := newMSPSigner(t, "Org1MSP")
+	endorser, endorserCert := newMSPSigner(t, "Org2MSP")
+	const certificateID = "registered-endorser-ID"
+	compact, err := endorser.WithCertificateID(certificateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashed, err := endorser.WithCertificateHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certBlock, _ := pem.Decode(endorserCert)
+	certDigest := sha256.Sum256(certBlock.Bytes)
+	wantIDs := []string{"", certificateID, hex.EncodeToString(certDigest[:])}
+	inv, err := efabx.NewInvocationBuilder(client).NewInvocation("mychannel", "myns", "v1", 3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var responses []*peer.ProposalResponse
+	for _, signer := range []sdk.Signer{endorser, compact, hashed} {
+		resp, err := efabx.NewEndorsementBuilder(signer).Endorse(inv, endorsement.Success(blocks.ReadWriteSet{
+			Writes: []blocks.KVWrite{{Key: "a", Value: []byte("va")}},
+		}, "", nil, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		responses = append(responses, resp)
+	}
+	env, err := NewTxPackager(client).PackageTx(sdk.Endorsement{Proposal: inv.Proposal, Responses: responses})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyEnvelope(env); err != nil {
+		t.Fatal(err)
+	}
+	payl, shdr := unpack(t, env)
+	creator, err := protoutil.UnmarshalIdentity(shdr.Creator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(creator.GetCertificate(), clientCert) || creator.GetMspId() != "Org1MSP" {
+		t.Fatal("client's full-certificate identity changed")
+	}
+	var tx applicationpb.Tx
+	if err := proto.Unmarshal(payl.Data, &tx); err != nil {
+		t.Fatal(err)
+	}
+	if len(tx.Namespaces) != 1 || len(tx.Endorsements) != 1 || len(tx.Endorsements[0].EndorsementsWithIdentity) != 3 {
+		t.Fatalf("unexpected packaged transaction: %v", &tx)
+	}
+	cert, err := parseCert(endorserCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := tx.Namespaces[0].ASN1Marshal(inv.TxID, tx.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(message)
+	for i, endorsement := range tx.Endorsements[0].EndorsementsWithIdentity {
+		id := endorsement.Identity
+		if id.GetMspId() != "Org2MSP" || !bytes.Equal(endorsement.Endorsement, responses[i].Endorsement.Signature) {
+			t.Fatal("endorser MSP ID or signature changed during packaging")
+		}
+		if i == 0 {
+			if !bytes.Equal(id.GetCertificate(), endorserCert) || id.GetCertificateId() != "" {
+				t.Fatal("full-certificate endorsement changed")
+			}
+		} else if id.GetCertificateId() != wantIDs[i] || len(id.GetCertificate()) != 0 {
+			t.Fatal("certificate ID was not preserved")
+		}
+		if !ecdsa.VerifyASN1(cert.PublicKey.(*ecdsa.PublicKey), digest[:], endorsement.Endorsement) {
+			t.Fatal("packaged endorsement signature does not verify")
+		}
 	}
 }

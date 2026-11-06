@@ -8,10 +8,12 @@ SPDX-License-Identifier: Apache-2.0
 package identity
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -19,14 +21,16 @@ import (
 
 	"github.com/hyperledger/fabric-lib-go/bccsp/utils"
 	"github.com/hyperledger/fabric-protos-go-apiv2/msp"
+	"github.com/hyperledger/fabric-x-common/api/msppb"
 	"google.golang.org/protobuf/proto"
 )
 
 // Signer is an ECDSA fabric identity.
 type Signer struct {
-	priv_sk  *ecdsa.PrivateKey
-	signcert []byte
-	mspID    string
+	priv_sk    *ecdsa.PrivateKey
+	signcert   []byte
+	mspID      string
+	serialized []byte
 }
 
 // SignerFromMSP creates a standard Fabric identity from an msp folder.
@@ -56,11 +60,16 @@ func SignerFromMSP(dir, mspID string) (Signer, error) {
 	if err != nil {
 		return Signer{}, err
 	}
+	serialized, err := proto.Marshal(&msp.SerializedIdentity{Mspid: mspID, IdBytes: certPEM})
+	if err != nil {
+		return Signer{}, fmt.Errorf("serialize certificate identity: %w", err)
+	}
 
 	return Signer{
-		priv_sk:  pk,
-		signcert: certPEM,
-		mspID:    mspID,
+		priv_sk:    pk,
+		signcert:   certPEM,
+		mspID:      mspID,
+		serialized: serialized,
 	}, nil
 }
 
@@ -84,9 +93,57 @@ func sign(k *ecdsa.PrivateKey, message []byte) ([]byte, error) {
 	return utils.MarshalECDSASignature(r, s)
 }
 
-// Serialize returns the MSP identity as a serialized proto that can be embedded in Fabric envelopes.
+// WithCertificateHash returns a copy using the lowercase hex SHA-256 of the
+// sign certificate's DER encoding as its certificate ID, for Fabric-X consumers
+// supporting cached identities. It does not hash the PEM text or normalize the
+// certificate. The original signer and signature generation are unchanged.
+//
+// The certificate must already be registered in the channel MSP's known_certs.
+// This default matches MSPs using SHA-256 identity identifiers and certificates
+// with low-S ECDSA signatures, such as those produced by configtxgen or fabric-ca.
+// For a different MSP hash configuration or a high-S certificate that the MSP
+// normalizes, use WithCertificateID with the MSP's registered identifier instead.
+// Registration and correspondence to the signing key are checked by the receiver.
+func (s Signer) WithCertificateHash() (Signer, error) {
+	block, _ := pem.Decode(s.signcert)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return Signer{}, fmt.Errorf("failed to decode PEM sign certificate")
+	}
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		return Signer{}, fmt.Errorf("parse sign certificate: %w", err)
+	}
+	digest := sha256.Sum256(block.Bytes)
+	return s.WithCertificateID(hex.EncodeToString(digest[:]))
+}
+
+// WithCertificateID returns a copy that serializes a registered certificate ID
+// instead of the full certificate, for Fabric-X consumers supporting cached
+// identities. The original signer and signature generation are unchanged.
+//
+// certificateID must be the identity identifier assigned by the channel MSP to
+// this signer's certificate, which must already be registered in its known_certs
+// configuration. Hash configuration and certificate normalization can affect that
+// identifier. This method rejects empty IDs and returns serialization errors;
+// registration and correspondence to the signing key are checked by the receiving
+// MSP, not by this method.
+func (s Signer) WithCertificateID(certificateID string) (Signer, error) {
+	if certificateID == "" {
+		return Signer{}, fmt.Errorf("certificate ID must not be empty")
+	}
+	serialized, err := proto.Marshal(msppb.NewIdentityWithIDOfCert(s.mspID, certificateID))
+	if err != nil {
+		return Signer{}, fmt.Errorf("serialize certificate ID identity: %w", err)
+	}
+	s.serialized = serialized
+	return s, nil
+}
+
+// Serialize returns a copy of the cached MSP identity: the full certificate by
+// default, or the ID configured by WithCertificateHash or WithCertificateID.
+// Serialization errors are returned when constructing or configuring the signer;
+// this method retains the standard Fabric signer signature and returns a nil error.
 func (s Signer) Serialize() ([]byte, error) {
-	return proto.Marshal(&msp.SerializedIdentity{Mspid: s.mspID, IdBytes: s.signcert})
+	return bytes.Clone(s.serialized), nil
 }
 
 func parsePrivateKey(privPEM []byte) (*ecdsa.PrivateKey, error) {
