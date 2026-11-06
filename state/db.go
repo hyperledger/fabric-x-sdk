@@ -4,9 +4,6 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-// package state provides a versioned insert-only database that can be used to construct
-// a local world state. For example, an endorser could use it to perform actions on a
-// recent state in order to generate a read/write set based on custom business logic.
 package state
 
 import (
@@ -54,7 +51,8 @@ func NewWriteDB(channel, connStr string) (*VersionedDB, error) {
 	return store, nil
 }
 
-// VersionedDB provides persistence for read/write sets per channel.
+// VersionedDB is an insert-only world state on SQLite, per channel. It keeps
+// every version of every key, so it can serve reads at any height.
 type VersionedDB struct {
 	channel string
 	backend *sql.DB
@@ -184,9 +182,9 @@ func (db *VersionedDB) UpdateWorldState(ctx context.Context, b blocks.Block) err
 	return nil
 }
 
-// Get returns the state of a key as of a given block height (time-travel).
+// GetAt returns the state of a key as of a given block height (time-travel).
 // It returns the write with the highest version whose block height is ≤ lastBlock.
-func (db *VersionedDB) Get(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
+func (db *VersionedDB) GetAt(namespace, key string, lastBlock uint64) (*blocks.WriteRecord, error) {
 	query := `
 	SELECT namespace, key, version_block, version_tx, version, value, is_delete, tx_id
 	FROM worldstate
@@ -206,8 +204,9 @@ func (db *VersionedDB) Get(namespace, key string, lastBlock uint64) (*blocks.Wri
 	return &w, nil
 }
 
-// GetCurrent returns the latest version of a key in a namespace.
-func (db *VersionedDB) GetCurrent(namespace, key string) (*blocks.WriteRecord, error) {
+// Get returns the latest version of a key in a namespace. It implements
+// blocks.RecordGetter.
+func (db *VersionedDB) Get(namespace, key string) (*blocks.WriteRecord, error) {
 	query := `
 	SELECT namespace, key, version_block, version_tx, version, value, is_delete, tx_id
 	FROM worldstate
@@ -227,21 +226,38 @@ func (db *VersionedDB) GetCurrent(namespace, key string) (*blocks.WriteRecord, e
 	return &w, nil
 }
 
-// currentRecordGetter adapts a *VersionedDB to blocks.RecordGetter via GetCurrent,
-// ignoring the db's own time-travel Get.
-type currentRecordGetter struct{ db *VersionedDB }
-
-func (r currentRecordGetter) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	return r.db.GetCurrent(namespace, key)
+// Snapshot opens a view pinned to the current height. Rows are only ever
+// inserted, and blocks committed later have higher heights, so the view does
+// not change.
+func (db *VersionedDB) Snapshot(ctx context.Context) (Snapshot, error) {
+	n, err := db.BlockNumber(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return versionedSnapshot{db: db, block: n}, nil
 }
 
-// CurrentRecordGetter returns a blocks.RecordGetter backed by db's GetCurrent, always
-// reading the latest committed value for a key. Use this wherever an API wants a
-// blocks.RecordGetter (for example blocks.NewMVCCValidator or local.NewLocalSubmitter)
-// backed by this VersionedDB.
-func (db *VersionedDB) CurrentRecordGetter() blocks.RecordGetter {
-	return currentRecordGetter{db}
+// SnapshotAt opens a view as of block. The VersionedDB keeps every version, so
+// any height is served. A block above the current height is capped at it, so
+// the view does not take in blocks as they arrive.
+func (db *VersionedDB) SnapshotAt(ctx context.Context, block uint64) (Snapshot, error) {
+	n, err := db.BlockNumber(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return versionedSnapshot{db: db, block: min(block, n)}, nil
 }
+
+type versionedSnapshot struct {
+	db    *VersionedDB
+	block uint64
+}
+
+func (s versionedSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
+	return s.db.GetAt(namespace, key, s.block)
+}
+
+func (s versionedSnapshot) Close() error { return nil }
 
 // GetHistory returns all versions of a key ordered by block height.
 func (db *VersionedDB) GetHistory(namespace, key string) ([]blocks.WriteRecord, error) {
@@ -294,6 +310,8 @@ func (db *VersionedDB) BlockNumber(ctx context.Context) (uint64, error) {
 	}
 	return uint64(lastBlock.Int64), nil
 }
+
+var _ KVS = (*VersionedDB)(nil)
 
 func (db *VersionedDB) Close() error {
 	return db.backend.Close()

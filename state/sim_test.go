@@ -7,40 +7,33 @@ SPDX-License-Identifier: Apache-2.0
 package state
 
 import (
-	"context"
 	"errors"
 	"testing"
 
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-// mockReadStore implements ReadStore for testing.
-type mockReadStore struct {
+// mockSnapshot implements Snapshot for testing.
+type mockSnapshot struct {
 	data map[string]*blocks.WriteRecord
 	err  error
 }
 
-func (m *mockReadStore) Get(namespace, key string, _ uint64) (*blocks.WriteRecord, error) {
+func (m *mockSnapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.data[namespace+"/"+key], nil
 }
 
-func (m *mockReadStore) BlockNumber(_ context.Context) (uint64, error) { return 0, nil }
+func (m *mockSnapshot) Close() error { return nil }
 
-func newSim(store ReadStore) *SimulationStore {
-	return &SimulationStore{
-		namespace: "ns",
-		store:     store,
-		blockNum:  10,
-		reads:     make(map[string]blocks.KVRead),
-		writes:    make(map[string]blocks.KVWrite),
-	}
+func newSim(snap Snapshot) *SimulationStore {
+	return NewSimulationStore(snap, "ns", 10, false)
 }
 
-func newSimMonotonic(store ReadStore) *SimulationStore {
-	s := newSim(store)
+func newSimMonotonic(snap Snapshot) *SimulationStore {
+	s := newSim(snap)
 	s.monotonicVersions = true
 	return s
 }
@@ -90,7 +83,7 @@ func TestGetState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := &mockReadStore{data: tt.storeData, err: tt.storeErr}
+			store := &mockSnapshot{data: tt.storeData, err: tt.storeErr}
 			sim := newSim(store)
 
 			val, err := sim.GetState(tt.key)
@@ -116,7 +109,7 @@ func TestGetState(t *testing.T) {
 }
 
 func TestGetState_ReadOwnWrite(t *testing.T) {
-	sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{}})
+	sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 	_ = sim.PutState("a", []byte("written"))
 
 	val, err := sim.GetState("a")
@@ -133,7 +126,7 @@ func TestGetState_ReadOwnWrite(t *testing.T) {
 }
 
 func TestGetState_ReadOwnDelete(t *testing.T) {
-	sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{}})
+	sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 	_ = sim.DelState("a")
 
 	val, err := sim.GetState("a")
@@ -147,7 +140,7 @@ func TestGetState_ReadOwnDelete(t *testing.T) {
 
 func TestPutState(t *testing.T) {
 	t.Run("basic put", func(t *testing.T) {
-		sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{}})
+		sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 		if err := sim.PutState("k", []byte("v")); err != nil {
 			t.Fatal(err)
 		}
@@ -158,7 +151,7 @@ func TestPutState(t *testing.T) {
 	})
 
 	t.Run("empty value becomes delete", func(t *testing.T) {
-		sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{}})
+		sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 		if err := sim.PutState("k", []byte{}); err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +162,7 @@ func TestPutState(t *testing.T) {
 	})
 
 	t.Run("empty key returns error", func(t *testing.T) {
-		sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{}})
+		sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 		if err := sim.PutState("", []byte("v")); err == nil {
 			t.Error("expected error for empty key")
 		}
@@ -177,7 +170,7 @@ func TestPutState(t *testing.T) {
 }
 
 func TestDelState(t *testing.T) {
-	sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{}})
+	sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 	if err := sim.DelState("k"); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +181,7 @@ func TestDelState(t *testing.T) {
 }
 
 func TestResult(t *testing.T) {
-	sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{
+	sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{
 		"ns/existing": {BlockNum: 1, TxNum: 0, Value: []byte("x")},
 	}})
 
@@ -206,7 +199,7 @@ func TestResult(t *testing.T) {
 }
 
 func TestAddLog(t *testing.T) {
-	sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{}})
+	sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 	sim.AddLog([]byte("addr"), [][]byte{[]byte("topic")}, []byte("data"))
 
 	logs := sim.Logs()
@@ -219,7 +212,7 @@ func TestAddLog(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	sim := newSim(&mockReadStore{data: map[string]*blocks.WriteRecord{}})
+	sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 	if sim.Version() != 10 {
 		t.Errorf("expected blockNum 10, got %d", sim.Version())
 	}
@@ -228,7 +221,7 @@ func TestVersion(t *testing.T) {
 func TestGetState_MonotonicVersion(t *testing.T) {
 	// With monotonicVersions=true the read's version must use WriteRecord.Version,
 	// not the block/tx numbers. This is what Fabric-X committer expects.
-	store := &mockReadStore{data: map[string]*blocks.WriteRecord{
+	store := &mockSnapshot{data: map[string]*blocks.WriteRecord{
 		"ns/a": {BlockNum: 5, TxNum: 1, Version: 3, Value: []byte("v")},
 	}}
 	sim := newSimMonotonic(store)
@@ -247,7 +240,7 @@ func TestGetState_MonotonicVersion(t *testing.T) {
 func TestGetState_BlockTxVersion(t *testing.T) {
 	// With monotonicVersions=false the read's version must use BlockNum/TxNum.
 	// This is what the standard Fabric committer expects.
-	store := &mockReadStore{data: map[string]*blocks.WriteRecord{
+	store := &mockSnapshot{data: map[string]*blocks.WriteRecord{
 		"ns/a": {BlockNum: 5, TxNum: 1, Version: 3, Value: []byte("v")},
 	}}
 	sim := newSim(store) // monotonicVersions=false
@@ -266,7 +259,7 @@ func TestGetState_BlockTxVersion(t *testing.T) {
 func TestGetState_NotFoundVersion(t *testing.T) {
 	// A missing key must produce a read with nil version regardless of mode.
 	for _, monotonic := range []bool{false, true} {
-		store := &mockReadStore{data: map[string]*blocks.WriteRecord{}}
+		store := &mockSnapshot{data: map[string]*blocks.WriteRecord{}}
 		var sim *SimulationStore
 		if monotonic {
 			sim = newSimMonotonic(store)

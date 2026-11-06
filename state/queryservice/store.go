@@ -12,14 +12,15 @@ import (
 	"sync/atomic"
 
 	"github.com/hyperledger/fabric-x-sdk/blocks"
+	"github.com/hyperledger/fabric-x-sdk/state"
 )
 
 // Store reads world state from the query service. It keeps no state of its
 // own: every read goes to the query service.
 //
 // Each snapshot is a query-service view, so a transaction sees one consistent
-// state. The query service only has the latest state, so there are no
-// snapshots at past blocks.
+// state. The query service only has the latest state, so SnapshotAt returns
+// state.ErrHistoryUnavailable: use Snapshot.
 //
 // It can still sit where a local database would and receive blocks, but only
 // to track the height a synchronizer resumes from.
@@ -33,23 +34,26 @@ type Store struct {
 	height atomic.Uint64
 }
 
-var (
-	_ blocks.BlockHandler = (*Store)(nil)
-	_ blocks.RecordGetter = (*Store)(nil)
-)
+var _ state.KVS = (*Store)(nil)
 
 // NewStore returns a Store reading through client.
 func NewStore(client Client) *Store {
 	return &Store{client: client}
 }
 
-// NewSnapshot opens a view of the latest state. Close the snapshot when done.
-func (s *Store) NewSnapshot() (*Snapshot, error) {
-	viewID, err := s.client.BeginView(context.Background())
+// Snapshot opens a view of the latest state. Close the snapshot when done.
+func (s *Store) Snapshot(ctx context.Context) (state.Snapshot, error) {
+	viewID, err := s.client.BeginView(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &Snapshot{store: s, viewID: viewID, cache: map[string]*blocks.WriteRecord{}}, nil
+	return &snapshot{store: s, viewID: viewID, cache: map[string]*blocks.WriteRecord{}}, nil
+}
+
+// SnapshotAt returns state.ErrHistoryUnavailable: the query service has no
+// history, and the store cannot tell whether block is still the latest.
+func (s *Store) SnapshotAt(context.Context, uint64) (state.Snapshot, error) {
+	return nil, state.ErrHistoryUnavailable
 }
 
 // Get reads the latest committed record, or nil if there is none.
@@ -90,8 +94,8 @@ func (s *Store) BlockNumber(context.Context) (uint64, error) { return s.height.L
 // Close closes the client.
 func (s *Store) Close() error { return s.client.Close() }
 
-// Snapshot reads through one view, caching each key so it is fetched once.
-type Snapshot struct {
+// snapshot reads through one view, caching each key so it is fetched once.
+type snapshot struct {
 	store  *Store
 	viewID string
 	mu     sync.Mutex
@@ -99,7 +103,7 @@ type Snapshot struct {
 }
 
 // Get reads a record in the snapshot, or nil if there is none.
-func (s *Snapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
+func (s *snapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
 	ck := namespace + "\x00" + key
 
 	s.mu.Lock()
@@ -121,6 +125,6 @@ func (s *Snapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
 }
 
 // Close ends the view.
-func (s *Snapshot) Close() error {
+func (s *snapshot) Close() error {
 	return s.store.client.EndView(context.Background(), s.viewID)
 }

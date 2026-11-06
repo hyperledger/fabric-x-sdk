@@ -50,8 +50,8 @@ type TxParser interface {
 }
 
 // NewLocalSubmitter creates a LocalSubmitter. recordGetter is used to validate MVCC reads
-// against sharedState's latest committed value; it's usually sharedState's own
-// CurrentRecordGetter().
+// against sharedState's latest committed value; it's usually sharedState itself
+// (a state.VersionedDB is a blocks.RecordGetter).
 // Set monotonicVersions=true for Fabric-X MVCC semantics (per-key version counter) and
 // false for classic Fabric (blockNum/txNum pairs).
 func NewLocalSubmitter(sharedState VersionedDB, recordGetter blocks.RecordGetter, channel, namespace string, packager TxPackager, parser TxParser, monotonicVersions bool) *LocalSubmitter {

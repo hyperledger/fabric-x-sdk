@@ -118,9 +118,9 @@ func testMVCCConflict(t *testing.T, s *testSetup) {
 	// When it is committed, tx1 and tx2 have definitely been processed.
 	s.sentinel(t, prefix+"/sentinel")
 
-	rec, err := s.localDB.GetCurrent(s.namespace, key)
+	rec, err := s.localDB.Get(s.namespace, key)
 	if err != nil {
-		t.Fatalf("GetCurrent: %v", err)
+		t.Fatalf("Get: %v", err)
 	}
 	if string(rec.Value) != "v1" {
 		t.Errorf("got %q, want %q — tx2 should have been rejected by MVCC", rec.Value, "v1")
@@ -146,9 +146,9 @@ func testDelete(t *testing.T, s *testSetup) {
 	}
 	s.sentinel(t, prefix+"/sentinel")
 
-	rec, err := s.localDB.GetCurrent(s.namespace, key)
+	rec, err := s.localDB.Get(s.namespace, key)
 	if err != nil {
-		t.Fatalf("GetCurrent: %v", err)
+		t.Fatalf("Get: %v", err)
 	}
 	switch s.networkType {
 	case "fabric":
@@ -194,9 +194,9 @@ func testSimulationPutAndDelState(t *testing.T, s *testSetup) {
 	}
 	s.sentinel(t, prefix+"/sentinel")
 
-	recAlpha, err := s.localDB.GetCurrent(s.namespace, keyAlpha)
+	recAlpha, err := s.localDB.Get(s.namespace, keyAlpha)
 	if err != nil {
-		t.Fatalf("GetCurrent alpha: %v", err)
+		t.Fatalf("Get alpha: %v", err)
 	}
 	switch s.networkType {
 	case "fabric":
@@ -208,9 +208,9 @@ func testSimulationPutAndDelState(t *testing.T, s *testSetup) {
 			t.Errorf("expected nil value with IsDelete=false for alpha, got %+v", recAlpha)
 		}
 	}
-	recBeta, err := s.localDB.GetCurrent(s.namespace, keyBeta)
+	recBeta, err := s.localDB.Get(s.namespace, keyBeta)
 	if err != nil {
-		t.Fatalf("GetCurrent beta: %v", err)
+		t.Fatalf("Get beta: %v", err)
 	}
 	if string(recBeta.Value) != "b" {
 		t.Errorf("beta: got %q, want %q after alpha deletion", recBeta.Value, "b")
@@ -303,9 +303,9 @@ func testPointInTimeSimulation(t *testing.T, s *testSetup) {
 	// Sentinel ensures the stale RWS has been processed before we inspect the key.
 	s.sentinel(t, prefix+"/sentinel")
 
-	rec, err := s.localDB.GetCurrent(s.namespace, key)
+	rec, err := s.localDB.Get(s.namespace, key)
 	if err != nil {
-		t.Fatalf("GetCurrent: %v", err)
+		t.Fatalf("Get: %v", err)
 	}
 	if string(rec.Value) != "v1" {
 		t.Errorf("got %q, want %q — stale snapshot tx should have been rejected by MVCC", rec.Value, "v1")
@@ -677,7 +677,7 @@ func testQueryServiceStore(t *testing.T, s *testSetup) {
 	}
 
 	write(keyA, "a")
-	snap, err := store.NewSnapshot()
+	snap, err := store.Snapshot(t.Context())
 	if err != nil {
 		t.Fatalf("new snapshot: %v", err)
 	}
