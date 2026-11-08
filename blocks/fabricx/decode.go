@@ -62,6 +62,10 @@ func DecodeMetadata(metadata [][]byte) Metadata {
 
 // DecodeNamespaces converts Fabric-X TxNamespace protos into the SDK's
 // protocol-neutral per-namespace read/write sets.
+//
+// Writes never get IsDelete set, on purpose. Fabric-X has no delete: a nil
+// value is stored as a NULL value at the next version, and the key keeps
+// existing.
 func DecodeNamespaces(namespaces []*applicationpb.TxNamespace) []blocks.NsReadWriteSet {
 	nsRWS := make([]blocks.NsReadWriteSet, len(namespaces))
 	for i, ns := range namespaces {

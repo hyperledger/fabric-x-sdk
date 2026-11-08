@@ -256,6 +256,29 @@ func TestGetState_BlockTxVersion(t *testing.T) {
 	}
 }
 
+func TestGetState_MonotonicTombstoneKeepsVersion(t *testing.T) {
+	// Fabric-X keeps a deleted key's row and version, so a read of it must
+	// carry that version or the committer rejects it.
+	store := &mockSnapshot{data: map[string]*blocks.WriteRecord{
+		"ns/a": {BlockNum: 5, Version: 3, Value: []byte("stale"), IsDelete: true},
+	}}
+	sim := newSimMonotonic(store)
+	val, err := sim.GetState("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != nil {
+		t.Errorf("expected nil value for a deleted key, got %q", val)
+	}
+	read, ok := sim.reads["a"]
+	if !ok {
+		t.Fatal("read not recorded")
+	}
+	if read.Version == nil || read.Version.BlockNum != 3 {
+		t.Errorf("expected Version.BlockNum=3, got %+v", read.Version)
+	}
+}
+
 func TestGetState_NotFoundVersion(t *testing.T) {
 	// A missing key must produce a read with nil version regardless of mode.
 	for _, monotonic := range []bool{false, true} {

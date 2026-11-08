@@ -133,9 +133,12 @@ func (l *MVCCValidator) checkNs(ns string, reads []KVRead) (Status, string, erro
 		if err != nil {
 			return StatusUnknown, "", fmt.Errorf("failed to get state for key %q: %v", r.Key, err)
 		}
-		if rec != nil && rec.IsDelete {
-			// A tombstone (kept by a store that preserves its version counter
-			// across a delete) has no live value: treat it as no record.
+		if rec != nil && rec.IsDelete && !l.monotonicVersions {
+			// Classic Fabric removes a deleted key, so a tombstone (kept by a
+			// store that preserves its version counter across a delete) counts
+			// as no record. Fabric-X keeps the row and its version, so there a
+			// tombstone is checked like any other record. Fabric-X blocks never
+			// use IsDelete.
 			rec = nil
 		}
 

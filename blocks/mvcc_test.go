@@ -143,6 +143,35 @@ func TestMVCCValidator(t *testing.T) {
 			wantStatus: StatusMVCCConflict,
 		},
 		{
+			name: "fabric mode: tombstone counts as absent",
+			db: mockDB{
+				ns + "/k": {BlockNum: 3, Version: 2, IsDelete: true},
+			},
+			monotonic:  false,
+			reads:      []KVRead{{Key: "k"}},
+			wantStatus: StatusCommitted,
+		},
+		{
+			name: "fabric-x mode: tombstone keeps its version",
+			db: mockDB{
+				ns + "/k": {BlockNum: 3, Version: 2, IsDelete: true},
+			},
+			monotonic: true,
+			reads: []KVRead{
+				{Key: "k", Version: &Version{BlockNum: 2}},
+			},
+			wantStatus: StatusCommitted,
+		},
+		{
+			name: "fabric-x mode: nil-version read of a tombstone conflicts",
+			db: mockDB{
+				ns + "/k": {BlockNum: 3, Version: 2, IsDelete: true},
+			},
+			monotonic:  true,
+			reads:      []KVRead{{Key: "k"}},
+			wantStatus: StatusMVCCConflict,
+		},
+		{
 			name:       "db error returns unknown status and error",
 			db:         errDB{},
 			reads:      []KVRead{{Key: "k", Version: &Version{BlockNum: 1}}},
