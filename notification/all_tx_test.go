@@ -71,8 +71,8 @@ func TestAllTxStreamer_DeliversBatchesToHandlers(t *testing.T) {
 	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{handler}, sdk.NewTestLogger(t, "test"), 0)
 
 	req := &notification.StreamAllRequest{}
-	if err := streamer.Stream(context.Background(), req); err != nil {
-		t.Fatalf("Stream failed: %v", err)
+	if err := streamer.Stream(context.Background(), req); !errors.Is(err, notification.ErrStreamClosed) {
+		t.Fatalf("Stream returned %v, want ErrStreamClosed once the peer ends the stream", err)
 	}
 
 	// The peer's loop returned before the handler goroutine necessarily drained the
@@ -102,8 +102,8 @@ func TestAllTxStreamer_MultipleHandlers(t *testing.T) {
 	h2 := &mockAllTxHandler{}
 	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{h1, h2}, sdk.NewTestLogger(t, "test"), 0)
 
-	if err := streamer.Stream(context.Background(), &notification.StreamAllRequest{}); err != nil {
-		t.Fatalf("Stream failed: %v", err)
+	if err := streamer.Stream(context.Background(), &notification.StreamAllRequest{}); !errors.Is(err, notification.ErrStreamClosed) {
+		t.Fatalf("Stream returned %v, want ErrStreamClosed once the peer ends the stream", err)
 	}
 
 	if len(h1.seen()) != 1 || len(h2.seen()) != 1 {
@@ -256,8 +256,8 @@ func TestAllTxStreamer_DrainsQueueInOrderUnderBackpressure(t *testing.T) {
 	peer := &mockAllTxPeer{batches: batches}
 	streamer := notification.NewAllTxStreamer(peer, []notification.AllTxHandler{handler}, sdk.NewTestLogger(t, "test"), 0)
 
-	if err := streamer.Stream(context.Background(), &notification.StreamAllRequest{}); err != nil {
-		t.Fatalf("Stream failed: %v", err)
+	if err := streamer.Stream(context.Background(), &notification.StreamAllRequest{}); !errors.Is(err, notification.ErrStreamClosed) {
+		t.Fatalf("Stream returned %v, want ErrStreamClosed once the peer ends the stream", err)
 	}
 
 	if len(order) != nBatches {
