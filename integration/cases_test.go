@@ -554,9 +554,10 @@ func testStreamAllTransactions(t *testing.T, s *testSetup) {
 
 	// Cancel first, then wait: the streaming goroutine logs and calls t.Errorf, and
 	// neither is legal once this test has returned. Deferred calls run in reverse, so
-	// this wait happens after the cancel above.
+	// the cancel must happen here rather than in the defer above.
 	streamDone := make(chan struct{})
 	defer func() {
+		cancel()
 		select {
 		case <-streamDone:
 		case <-time.After(10 * time.Second):

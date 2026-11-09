@@ -188,7 +188,8 @@ func (p *testPeer) GetTxByID(ctx context.Context, req *committerpb.TxID) (*commo
 // BlockEvent for every block committed after subscription, honoring
 // StreamBlocksRequest's namespace (OR match) and status filters as well as the
 // include_* flags. Like the real committer's sidecar, this is a real-time feed
-// with no historical replay.
+// with no historical replay, and every block is sent, even when none of its
+// transactions match the filters (the BlockEvent then has no events).
 //
 // Transactions are decoded as Fabric-X applicationpb.Tx; blocks from a "fabric"
 // (classic) fabrictest network use a different channel header type and are
@@ -197,11 +198,7 @@ func (p *testPeer) StreamBlocks(req *committerpb.StreamBlocksRequest, stream com
 	_, sub := p.ledger.subscribe()
 
 	for block := range sub {
-		batch := buildBlockEvent(block, req)
-		if batch == nil {
-			continue
-		}
-		if err := stream.Send(batch); err != nil {
+		if err := stream.Send(buildBlockEvent(block, req)); err != nil {
 			return err
 		}
 	}
@@ -210,7 +207,7 @@ func (p *testPeer) StreamBlocks(req *committerpb.StreamBlocksRequest, stream com
 }
 
 // buildBlockEvent decodes block into a BlockEvent filtered per req.
-// It returns nil if the block has no events matching the filters.
+// The BlockEvent is returned even if no events match the filters.
 func buildBlockEvent(block *common.Block, req *committerpb.StreamBlocksRequest) *committerpb.BlockEvent {
 	txFilter := block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER]
 
@@ -270,9 +267,6 @@ func buildBlockEvent(block *common.Block, req *committerpb.StreamBlocksRequest) 
 		events = append(events, event)
 	}
 
-	if len(events) == 0 {
-		return nil
-	}
 	return &committerpb.BlockEvent{Header: block.Header, Events: events}
 }
 

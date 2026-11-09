@@ -71,8 +71,8 @@ func TestBuildBlockEvent_NamespaceFilterExcludesNonMatching(t *testing.T) {
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
 	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{FilterNamespaces: []string{"basic"}})
-	if batch != nil {
-		t.Fatalf("expected nil batch (no matching namespace), got %+v", batch)
+	if batch == nil || len(batch.Events) != 0 || batch.GetHeader().GetNumber() != 1 {
+		t.Fatalf("expected an empty batch for block 1 (no matching namespace), got %+v", batch)
 	}
 }
 
@@ -154,10 +154,10 @@ func TestBuildBlockEvent_StatusFilter(t *testing.T) {
 		t.Fatalf("expected only the aborted tx, got %+v", batch)
 	}
 
-	// Filtered to a status neither tx has: no events at all.
+	// Filtered to a status neither tx has: the block is still sent, with no events.
 	batch = buildBlockEvent(block, &committerpb.StreamBlocksRequest{FilterStatus: []committerpb.Status{committerpb.Status_MALFORMED_BAD_ENVELOPE}})
-	if batch != nil {
-		t.Fatalf("expected nil batch, got %+v", batch)
+	if batch == nil || len(batch.Events) != 0 {
+		t.Fatalf("expected an empty batch, got %+v", batch)
 	}
 }
 
@@ -226,8 +226,8 @@ func TestBuildBlockEvent_ConfigTxSkipped(t *testing.T) {
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
 	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
-	if batch != nil {
-		t.Fatalf("expected nil batch (config tx must be skipped), got %+v", batch)
+	if batch == nil || len(batch.Events) != 0 {
+		t.Fatalf("expected an empty batch (config tx must be skipped), got %+v", batch)
 	}
 }
 
@@ -239,8 +239,8 @@ func TestBuildBlockEvent_ClassicFabricTxSkipped(t *testing.T) {
 	block := buildTestBlock(t, 1, []*common.Envelope{env}, []byte{byte(committerpb.Status_COMMITTED)})
 
 	batch := buildBlockEvent(block, &committerpb.StreamBlocksRequest{})
-	if batch != nil {
-		t.Fatalf("expected nil batch (classic fabric tx must be skipped), got %+v", batch)
+	if batch == nil || len(batch.Events) != 0 {
+		t.Fatalf("expected an empty batch (classic fabric tx must be skipped), got %+v", batch)
 	}
 }
 
