@@ -8,6 +8,7 @@ package notification
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hyperledger/fabric-x-common/api/applicationpb"
@@ -99,6 +100,12 @@ type AllTxPeer interface {
 	StreamAllTransactions(ctx context.Context, req *StreamAllRequest, processor AllTxProcessor) error
 }
 
+// ErrStreamClosed is returned by AllTxStreamer.Stream when the peer ends the stream
+// cleanly while the caller's context is still live. The feed has no historical
+// replay, so any block committed after this point is missed until the caller
+// re-subscribes (and catches up, e.g. with network.Synchronizer).
+var ErrStreamClosed = errors.New("all-tx stream closed by peer")
+
 // DefaultQueueDepth is how many committed-block batches AllTxStreamer buffers between
 // the stream's receive loop and the goroutine running the handler chain.
 //
@@ -147,7 +154,8 @@ func NewAllTxStreamer(peer AllTxPeer, handlers []AllTxHandler, log sdk.Logger, q
 // Stream runs the handler chain on a goroutine it owns rather than on the peer's
 // receive loop, and does not return until that goroutine has exited. It returns the
 // first handler error if there was one, nil if ctx was cancelled (a normal shutdown),
-// otherwise whatever ended the stream.
+// ErrStreamClosed if the peer ended the stream cleanly, otherwise whatever ended the
+// stream. It never returns nil while ctx is still live.
 func (s *AllTxStreamer) Stream(ctx context.Context, req *StreamAllRequest) error {
 	// Cancelling streamCtx is how the handler goroutine tears the stream down after a
 	// handler error, and what releases a receive loop blocked on a full queue.
@@ -182,6 +190,10 @@ func (s *AllTxStreamer) Stream(ctx context.Context, req *StreamAllRequest) error
 		// Cancelled by our caller: a normal shutdown, not a stream failure. Any
 		// streamErr here is just the receive loop noticing the same cancellation.
 		return nil
+	case streamErr == nil:
+		// The peer closed the stream without an error, but we did not ask it to stop.
+		// To the caller that is a gap in the feed, not a shutdown.
+		return ErrStreamClosed
 	default:
 		return streamErr
 	}
