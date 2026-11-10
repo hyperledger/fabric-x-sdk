@@ -44,6 +44,7 @@ var cases = []testCase{
 	{"InputArgsAndEvents", testInputArgsAndEvents},
 	{"Notifications", testNotifications},
 	{"StreamAllTransactions", testStreamAllTransactions},
+	{"State", testState},
 }
 
 // runAll executes every case as a subtest against s.
