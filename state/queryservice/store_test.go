@@ -32,12 +32,18 @@ func (c *fakeClient) BeginView(context.Context) (string, error) {
 	return fmt.Sprintf("view-%d", c.begun), nil
 }
 
-func (c *fakeClient) EndView(_ context.Context, viewID string) error {
+func (c *fakeClient) EndView(ctx context.Context, viewID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.ended = append(c.ended, viewID)
 	return nil
 }
 
-func (c *fakeClient) GetRows(_ context.Context, viewID, ns string, keys [][]byte) ([]queryservice.Row, error) {
+func (c *fakeClient) GetRows(ctx context.Context, viewID, ns string, keys [][]byte) ([]queryservice.Row, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	c.reads++
 	c.readViews = append(c.readViews, viewID)
 	var out []queryservice.Row
@@ -120,6 +126,31 @@ func TestStoreSnapshotCachesReads(t *testing.T) {
 	}
 	if client.reads != 2 {
 		t.Errorf("client reads = %d, want 2 (one per key)", client.reads)
+	}
+}
+
+func TestStoreSnapshotReadsUseItsContext(t *testing.T) {
+	client := &fakeClient{rows: map[string]queryservice.Row{"k1": {Key: []byte("k1"), Value: []byte("v1")}}}
+	store := queryservice.NewStore(client)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	snap, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snap.Get("basic", "k1"); err != nil {
+		t.Fatal(err)
+	}
+
+	cancel()
+	if _, err := snap.Get("basic", "k2"); !errors.Is(err, context.Canceled) {
+		t.Errorf("read after cancel: error = %v, want context.Canceled", err)
+	}
+	if err := snap.Close(); err != nil {
+		t.Fatalf("Close after cancel: %v", err)
+	}
+	if len(client.ended) != 1 {
+		t.Errorf("views ended = %v, want the view ended despite the cancel", client.ended)
 	}
 }
 

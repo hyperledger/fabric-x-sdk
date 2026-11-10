@@ -41,13 +41,16 @@ func NewStore(client Client) *Store {
 	return &Store{client: client}
 }
 
-// Snapshot opens a view of the latest state. Close the snapshot when done.
+// Snapshot opens a view of the latest state. Reads through the snapshot use
+// ctx, so cancelling it, for example when the request a simulation serves is
+// abandoned, stops them. Close the snapshot when done; Close ends the view even
+// after ctx is cancelled.
 func (s *Store) Snapshot(ctx context.Context) (state.Snapshot, error) {
 	viewID, err := s.client.BeginView(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &snapshot{store: s, viewID: viewID, cache: map[string]*blocks.WriteRecord{}}, nil
+	return &snapshot{ctx: ctx, store: s, viewID: viewID, cache: map[string]*blocks.WriteRecord{}}, nil
 }
 
 // SnapshotAt returns state.ErrHistoryUnavailable: the query service has no
@@ -58,11 +61,11 @@ func (s *Store) SnapshotAt(context.Context, uint64) (state.Snapshot, error) {
 
 // Get reads the latest committed record, or nil if there is none.
 func (s *Store) Get(namespace, key string) (*blocks.WriteRecord, error) {
-	return s.get("", namespace, key)
+	return s.get(context.Background(), "", namespace, key)
 }
 
-func (s *Store) get(viewID, namespace, key string) (*blocks.WriteRecord, error) {
-	rows, err := s.client.GetRows(context.Background(), viewID, namespace, [][]byte{[]byte(key)})
+func (s *Store) get(ctx context.Context, viewID, namespace, key string) (*blocks.WriteRecord, error) {
+	rows, err := s.client.GetRows(ctx, viewID, namespace, [][]byte{[]byte(key)})
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +99,7 @@ func (s *Store) Close() error { return s.client.Close() }
 
 // snapshot reads through one view, caching each key so it is fetched once.
 type snapshot struct {
+	ctx    context.Context
 	store  *Store
 	viewID string
 	mu     sync.Mutex
@@ -113,7 +117,7 @@ func (s *snapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
 		return rec, nil
 	}
 
-	rec, err := s.store.get(s.viewID, namespace, key)
+	rec, err := s.store.get(s.ctx, s.viewID, namespace, key)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +128,8 @@ func (s *snapshot) Get(namespace, key string) (*blocks.WriteRecord, error) {
 	return rec, nil
 }
 
-// Close ends the view.
+// Close ends the view. It keeps ctx's values but not its cancellation, so an
+// abandoned request still ends its view rather than leaving it to expire.
 func (s *snapshot) Close() error {
-	return s.store.client.EndView(context.Background(), s.viewID)
+	return s.store.client.EndView(context.WithoutCancel(s.ctx), s.viewID)
 }
