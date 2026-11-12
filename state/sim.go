@@ -12,14 +12,6 @@ import (
 	"github.com/hyperledger/fabric-x-sdk/blocks"
 )
 
-// Log is an Ethereum-style event emitted during transaction execution.
-// It is recorded by AddLog and included in the endorsed transaction.
-type Log struct {
-	Address []byte
-	Topics  [][]byte
-	Data    []byte
-}
-
 // SimulationStore implements a very basic set of state interactions on a snapshot of the world state.
 // It records reads and writes. By default, like in Fabric, you cannot 'read your own writes' but this can be configured.
 // Function signatures correspond to the 'chaincode stub' where possible.
@@ -29,7 +21,6 @@ type SimulationStore struct {
 	blockNum          uint64
 	reads             map[string]blocks.KVRead
 	writes            map[string]blocks.KVWrite
-	logs              []Log
 	monotonicVersions bool // if true, KVRead.Version is built from WriteRecord.Version (fabric-x MVCC semantics)
 }
 
@@ -127,15 +118,6 @@ func (s *SimulationStore) DelState(key string) error {
 	return nil
 }
 
-// AddLog records a log (ethereum event) which will be part of the endorsed transaction.
-func (s *SimulationStore) AddLog(address []byte, topics [][]byte, data []byte) {
-	s.logs = append(s.logs, Log{
-		Topics:  topics,
-		Data:    data,
-		Address: address,
-	})
-}
-
 // Result returns the accumulated read-write set, ready to be passed to endorsement.Success.
 func (s *SimulationStore) Result() blocks.ReadWriteSet {
 	rws := blocks.ReadWriteSet{
@@ -149,11 +131,6 @@ func (s *SimulationStore) Result() blocks.ReadWriteSet {
 		rws.Writes = append(rws.Writes, w)
 	}
 	return rws
-}
-
-// Logs returns all logs recorded via AddLog during this simulation.
-func (s *SimulationStore) Logs() []Log {
-	return s.logs
 }
 
 // Version is the blockheight of this snapshot.

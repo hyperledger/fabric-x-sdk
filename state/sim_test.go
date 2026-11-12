@@ -198,19 +198,6 @@ func TestResult(t *testing.T) {
 	}
 }
 
-func TestAddLog(t *testing.T) {
-	sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
-	sim.AddLog([]byte("addr"), [][]byte{[]byte("topic")}, []byte("data"))
-
-	logs := sim.Logs()
-	if len(logs) != 1 {
-		t.Fatalf("expected 1 log, got %d", len(logs))
-	}
-	if string(logs[0].Address) != "addr" {
-		t.Errorf("unexpected address: %q", logs[0].Address)
-	}
-}
-
 func TestVersion(t *testing.T) {
 	sim := newSim(&mockSnapshot{data: map[string]*blocks.WriteRecord{}})
 	if sim.Version() != 10 {
