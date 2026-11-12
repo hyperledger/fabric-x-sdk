@@ -54,7 +54,8 @@ func NewSimulationStore(snap Snapshot, namespace string, blockNum uint64, monoto
 // read own write (if enabled) -> return last written value, nil
 // read own delete (if enabled) -> return nil, nil
 // no result -> store read with nil version, return nil, nil
-// deleted result -> no read, return nil, nil
+// deleted result (Fabric) -> no read, return nil, nil
+// deleted result (Fabric-X) -> store read version, return nil, nil
 // result -> store read version, return value, nil
 func (s *SimulationStore) GetState(key string) ([]byte, error) {
 	// return early, we don't record reading your own writes
@@ -74,8 +75,11 @@ func (s *SimulationStore) GetState(key string) ([]byte, error) {
 	var val []byte
 	var read = blocks.KVRead{Key: key}
 	if record != nil {
-		// Fabric doesn't add a read marker if the value is deleted.
-		if record.IsDelete {
+		// Fabric doesn't add a read marker if the value is deleted. Fabric-X
+		// keeps a deleted key's row and version, so a read of it must carry
+		// that version. Fabric-X blocks never carry IsDelete (see
+		// fabricx.DecodeNamespaces), so the Fabric-X case is defensive.
+		if record.IsDelete && !s.monotonicVersions {
 			return nil, nil
 		}
 		if s.monotonicVersions {
@@ -87,7 +91,9 @@ func (s *SimulationStore) GetState(key string) ([]byte, error) {
 			}
 		}
 
-		val = record.Value
+		if !record.IsDelete {
+			val = record.Value
+		}
 	}
 	s.reads[key] = read
 

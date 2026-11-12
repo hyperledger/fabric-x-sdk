@@ -9,9 +9,31 @@ package fabricx
 import (
 	"testing"
 
+	"github.com/hyperledger/fabric-x-common/api/applicationpb"
 	"github.com/hyperledger/fabric-x-sdk/api/metadatapb"
 	"google.golang.org/protobuf/proto"
 )
+
+// TestDecodeNamespacesNilValueIsNotDelete pins that a nil-value write decodes as
+// an ordinary write, not a delete. Fabric-X keeps the key and bumps its version,
+// so stores must keep it as a versioned record (see DecodeNamespaces).
+func TestDecodeNamespacesNilValueIsNotDelete(t *testing.T) {
+	version := uint64(4)
+	got := DecodeNamespaces([]*applicationpb.TxNamespace{{
+		NsId:        "basic",
+		BlindWrites: []*applicationpb.Write{{Key: []byte("blind")}},
+		ReadWrites:  []*applicationpb.ReadWrite{{Key: []byte("rw"), Version: &version}},
+	}})
+
+	if len(got) != 1 || len(got[0].RWS.Writes) != 2 {
+		t.Fatalf("expected 1 namespace with 2 writes, got %+v", got)
+	}
+	for _, w := range got[0].RWS.Writes {
+		if w.IsDelete || w.Value != nil {
+			t.Errorf("write %q = %+v, want a nil-value write without IsDelete", w.Key, w)
+		}
+	}
+}
 
 func TestMetadataRoundTrip(t *testing.T) {
 	tests := []struct {

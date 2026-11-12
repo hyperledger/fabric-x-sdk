@@ -96,8 +96,8 @@ func buildTx(rws blocks.ReadWriteSet, namespace string, nsVersion uint64, metada
 	blindWrites := make([]*applicationpb.Write, 0)
 
 	for _, w := range writes {
-		// TODO is this correct?
-		// If so, do we need the IsDelete?
+		// Fabric-X has no delete operation: a delete is a write of a nil value,
+		// which the committer stores as a NULL value at the next version.
 		if w.IsDelete {
 			w.Value = nil
 		}
