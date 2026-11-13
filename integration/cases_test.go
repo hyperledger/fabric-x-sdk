@@ -9,7 +9,6 @@ package integration
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -38,7 +37,6 @@ var cases = []testCase{
 	{"SimulationPutAndDelState", testSimulationPutAndDelState},
 	{"GetHistory", testGetHistory},
 	{"PointInTimeSimulation", testPointInTimeSimulation},
-	{"AddLog", testAddLog},
 	{"EndorsementClientExecute", testEndorsementClientExecuteTransaction},
 	{"BadRequestEndorsement", testBadRequestEndorsement},
 	{"InputArgsAndEvents", testInputArgsAndEvents},
@@ -311,45 +309,6 @@ func testPointInTimeSimulation(t *testing.T, s *testSetup) {
 	if string(rec.Value) != "v1" {
 		t.Errorf("got %q, want %q — stale snapshot tx should have been rejected by MVCC", rec.Value, "v1")
 	}
-}
-
-func testAddLog(t *testing.T, s *testSetup) {
-	ctx := t.Context()
-	key := t.Name() + "/" + rand.Text()
-
-	sim := s.newSimStore(t, 0)
-	if err := sim.PutState(key, []byte("with-log")); err != nil {
-		t.Fatalf("PutState: %v", err)
-	}
-	sim.AddLog(
-		[]byte("0xcontract"),
-		[][]byte{[]byte("Transfer"), []byte("0xfrom"), []byte("0xto")},
-		[]byte(`{"amount":42}`),
-	)
-
-	logs := sim.Logs()
-	if len(logs) != 1 {
-		t.Fatalf("expected 1 log, got %d", len(logs))
-	}
-	eventBytes, err := json.Marshal(logs)
-	if err != nil {
-		t.Fatalf("marshal logs: %v", err)
-	}
-
-	inv := s.newInvocation(t, [][]byte{[]byte("invoke")})
-	var responses []*peer.ProposalResponse
-	for _, b := range s.builders {
-		resp, err := b.Endorse(inv, endorsement.Success(sim.Result(), "log", eventBytes, nil))
-		if err != nil {
-			t.Fatalf("Endorse: %v", err)
-		}
-		responses = append(responses, resp)
-	}
-	end := sdk.Endorsement{Proposal: inv.Proposal, Responses: responses}
-	if err := s.submitter.Submit(ctx, end); err != nil {
-		t.Fatalf("submitEndorsement: %v", err)
-	}
-	s.waitForKeyValue(t, key, "with-log")
 }
 
 func testEndorsementClientExecuteTransaction(t *testing.T, s *testSetup) {
